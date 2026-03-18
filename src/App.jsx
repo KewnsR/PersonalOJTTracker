@@ -96,6 +96,10 @@ export default function App() {
     toLocalDateString(getEndOfWeek(new Date()))
   );
   const [journalInput, setJournalInput] = useState("");
+  const [editingJournalKey, setEditingJournalKey] = useState(null);
+  const [journalEditForm, setJournalEditForm] = useState({ from: "", to: "", note: "" });
+  const [journalDeleteTarget, setJournalDeleteTarget] = useState(null);
+  const [entryDeleteTarget, setEntryDeleteTarget] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -337,7 +341,6 @@ export default function App() {
     const entry = typeof id === "object" ? id : entries.find((it) => getEntryId(it) === id);
     const targetId = entry ? getEntryId(entry) : id;
     if (!targetId) return;
-    if (!window.confirm("Delete this entry?")) return;
 
     const updated = entries.filter((e) => getEntryId(e) !== targetId);
     setEntries(updated);
@@ -351,6 +354,16 @@ export default function App() {
     } catch {
       setError("");
     }
+  };
+
+  const requestDeleteEntry = (entry) => {
+    setEntryDeleteTarget(entry);
+  };
+
+  const confirmDeleteEntry = async () => {
+    if (!entryDeleteTarget) return;
+    await handleDelete(entryDeleteTarget);
+    setEntryDeleteTarget(null);
   };
 
   const saveLunchSettings = async () => {
@@ -418,9 +431,33 @@ export default function App() {
       .join("");
   }, [profile.name]);
 
+  const normalizedEntries = useMemo(() => {
+    return entries.map((entry) => {
+      const hasTimeRange = typeof entry?.timeIn === "string" && typeof entry?.timeOut === "string";
+      const computedHours = hasTimeRange
+        ? calculateHours(entry.timeIn, entry.timeOut, lunchStart, lunchEnd)
+        : Number(entry?.hours) || 0;
+
+      return {
+        ...entry,
+        hours: Number.isFinite(computedHours) ? Number(computedHours.toFixed(2)) : 0,
+      };
+    });
+  }, [entries, lunchStart, lunchEnd]);
+
+  const hoursByDate = useMemo(() => {
+    return normalizedEntries.reduce((acc, entry) => {
+      if (!entry?.date) return acc;
+      acc[entry.date] = Number(((acc[entry.date] || 0) + (Number(entry.hours) || 0)).toFixed(2));
+      return acc;
+    }, {});
+  }, [normalizedEntries]);
+
+  const loggedDaysCount = useMemo(() => Object.keys(hoursByDate).length, [hoursByDate]);
+
   const totalHours = useMemo(
-    () => entries.reduce((sum, item) => sum + (Number(item.hours) || 0), 0),
-    [entries]
+    () => normalizedEntries.reduce((sum, item) => sum + (Number(item.hours) || 0), 0),
+    [normalizedEntries]
   );
 
   const remainingHours = Math.max(0, requiredOjtHours - totalHours);
@@ -429,26 +466,36 @@ export default function App() {
       ? Math.min(100, (totalHours / requiredOjtHours) * 100)
       : 0;
 
-  const weekData = useMemo(() => {
-    return Array.from({ length: 7 }, (_, index) => {
-      const d = new Date();
-      d.setDate(d.getDate() - index);
-      const dateStr = toLocalDateString(d);
-      const sum = entries
-        .filter((e) => e.date === dateStr)
-        .reduce((acc, cur) => acc + (Number(cur.hours) || 0), 0);
+  const overallTrendData = useMemo(() => {
+    return Object.keys(hoursByDate)
+      .sort((a, b) => a.localeCompare(b))
+      .map((dateStr) => ({
+        date: dateStr,
+        name: fromDateString(dateStr).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+        }),
+        hours: Number((hoursByDate[dateStr] || 0).toFixed(2)),
+      }));
+  }, [hoursByDate]);
 
-      return {
-        name: fromDateString(dateStr).toLocaleDateString("en-US", { weekday: "short" }),
-        hours: Number(sum.toFixed(2)),
-      };
-    }).reverse();
-  }, [entries]);
+  const averageDailyHours = useMemo(() => {
+    if (!loggedDaysCount) return 0;
+    return totalHours / loggedDaysCount;
+  }, [totalHours, loggedDaysCount]);
+
+  const sortedEntries = useMemo(() => {
+    return [...normalizedEntries].sort((a, b) => {
+      const byDate = (b?.date || "").localeCompare(a?.date || "");
+      if (byDate !== 0) return byDate;
+      return (b?.timeIn || "").localeCompare(a?.timeIn || "");
+    });
+  }, [normalizedEntries]);
 
   const selectedDateEntries = useMemo(() => {
     const selectedDateStr = toLocalDateString(selectedDate);
-    return entries.filter((entry) => entry.date === selectedDateStr);
-  }, [entries, selectedDate]);
+    return sortedEntries.filter((entry) => entry.date === selectedDateStr);
+  }, [sortedEntries, selectedDate]);
 
   const currentWeekKey = useMemo(
     () => `${journalFromDate}__${journalToDate}`,
@@ -467,16 +514,26 @@ export default function App() {
     return `${fromLabel} - ${toLabel}`;
   }, [journalFromDate, journalToDate]);
 
+  const weeklyJournalHistory = useMemo(() => {
+    return Object.entries(weeklyJournalNotes)
+      .map(([key, note]) => {
+        const [from = "", to = ""] = key.split("__");
+        return {
+          key,
+          from,
+          to,
+          note: (note || "").trim(),
+        };
+      })
+      .filter((item) => item.note.length > 0)
+      .sort((a, b) => b.from.localeCompare(a.from));
+  }, [weeklyJournalNotes]);
+
   useEffect(() => {
     setJournalInput(weeklyJournalNotes[currentWeekKey] || "");
   }, [currentWeekKey, weeklyJournalNotes]);
 
-  const saveWeeklyJournal = async () => {
-    const nextJournalNotes = {
-      ...weeklyJournalNotes,
-      [currentWeekKey]: journalInput.trim(),
-    };
-
+  const persistWeeklyJournalNotes = async (nextJournalNotes) => {
     try {
       await axios.put(`${API_URL}/preferences`, {
         weeklyJournalNotes: nextJournalNotes,
@@ -487,6 +544,67 @@ export default function App() {
 
     setWeeklyJournalNotes(nextJournalNotes);
     localStorage.setItem("weeklyJournalNotes", JSON.stringify(nextJournalNotes));
+  };
+
+  const saveWeeklyJournal = async () => {
+    const nextJournalNotes = {
+      ...weeklyJournalNotes,
+      [currentWeekKey]: journalInput.trim(),
+    };
+
+    await persistWeeklyJournalNotes(nextJournalNotes);
+    setError("");
+  };
+
+  const startEditWeeklyJournalFromHistory = (item) => {
+    setEditingJournalKey(item.key);
+    setJournalEditForm({ from: item.from, to: item.to, note: item.note });
+  };
+
+  const cancelEditWeeklyJournalFromHistory = () => {
+    setEditingJournalKey(null);
+    setJournalEditForm({ from: "", to: "", note: "" });
+  };
+
+  const saveEditedWeeklyJournalFromHistory = async () => {
+    const nextFrom = journalEditForm.from;
+    const nextTo = journalEditForm.to;
+    const trimmedNote = journalEditForm.note.trim();
+
+    if (!nextFrom || !nextTo) {
+      setError("Please set both Date From and Date To for weekly journal.");
+      return;
+    }
+
+    const normalizedFrom = nextFrom <= nextTo ? nextFrom : nextTo;
+    const normalizedTo = nextFrom <= nextTo ? nextTo : nextFrom;
+    const nextKey = `${normalizedFrom}__${normalizedTo}`;
+
+    const nextJournalNotes = { ...weeklyJournalNotes };
+    if (editingJournalKey) {
+      delete nextJournalNotes[editingJournalKey];
+    }
+    if (trimmedNote) {
+      nextJournalNotes[nextKey] = trimmedNote;
+    }
+
+    await persistWeeklyJournalNotes(nextJournalNotes);
+    setEditingJournalKey(null);
+    setJournalEditForm({ from: "", to: "", note: "" });
+    setError("");
+  };
+
+  const requestDeleteWeeklyJournalFromHistory = (item) => {
+    setJournalDeleteTarget(item);
+  };
+
+  const confirmDeleteWeeklyJournalFromHistory = async () => {
+    if (!journalDeleteTarget?.key) return;
+
+    const nextJournalNotes = { ...weeklyJournalNotes };
+    delete nextJournalNotes[journalDeleteTarget.key];
+    await persistWeeklyJournalNotes(nextJournalNotes);
+    setJournalDeleteTarget(null);
     setError("");
   };
 
@@ -654,6 +772,19 @@ export default function App() {
           >
             Calendar
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("journal")}
+            className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+              activeTab === "journal"
+                ? "bg-cyan-500 text-slate-950"
+                : themeMode === "light"
+                  ? "text-slate-700 hover:bg-slate-100"
+                  : "text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            Weekly Journal
+          </button>
         </div>
 
         <div className="mb-6 flex flex-wrap items-center gap-2">
@@ -728,14 +859,14 @@ export default function App() {
             <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {[
             { label: "Total Hours", value: `${totalHours.toFixed(2)}h` },
-            { label: "Entries", value: `${entries.length}` },
+            { label: "Entries", value: `${normalizedEntries.length}` },
             {
               label: "Avg Daily",
-              value: `${entries.length ? (totalHours / entries.length).toFixed(2) : "0.00"}h`,
+              value: `${averageDailyHours.toFixed(2)}h`,
             },
             {
-              label: "This Week",
-              value: `${weekData.reduce((s, d) => s + d.hours, 0).toFixed(2)}h`,
+              label: "Logged Days",
+              value: `${loggedDaysCount}`,
             },
           ].map((item) => (
             <motion.div
@@ -750,9 +881,9 @@ export default function App() {
             </div>
 
             <div className="mb-8 rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow">
-          <h3 className="mb-4 text-xl font-bold text-slate-100">Weekly Hours</h3>
+          <h3 className="mb-4 text-xl font-bold text-slate-100">Overall Hours Trend</h3>
           <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={weekData}>
+            <LineChart data={overallTrendData}>
               <XAxis dataKey="name" stroke="#94A3B8" />
               <YAxis stroke="#94A3B8" />
               <Tooltip
@@ -924,14 +1055,14 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {entries.length === 0 ? (
+                {sortedEntries.length === 0 ? (
                   <tr>
                     <td className="p-8 text-center text-slate-400" colSpan="6">
                       No entries yet. Add your first one.
                     </td>
                   </tr>
                 ) : (
-                  entries.map((entry) => (
+                  sortedEntries.map((entry) => (
                     <tr
                       key={getEntryId(entry)}
                       className={
@@ -964,7 +1095,7 @@ export default function App() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDelete(entry)}
+                            onClick={() => requestDeleteEntry(entry)}
                             className={
                               themeMode === "light"
                                 ? "rounded-md bg-rose-100 px-2 py-1 text-rose-700 hover:bg-rose-200"
@@ -986,10 +1117,10 @@ export default function App() {
         )}
 
         {activeTab === "calendar" && (
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-[1.35fr_1fr]">
             <div className={`rounded-2xl p-6 shadow ${themeMode === "light" ? "border border-slate-200 bg-white" : "border border-slate-800 bg-slate-900"}`}>
               <h3 className={`mb-4 text-xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>Training Calendar</h3>
-              <div className={`calendar-wrapper rounded-xl p-3 ${themeMode === "light" ? "border border-slate-200 bg-slate-50" : "border border-slate-700 bg-slate-800"}`}>
+              <div className={`calendar-wrapper calendar-wrapper--large rounded-xl p-3 ${themeMode === "light" ? "border border-slate-200 bg-slate-50" : "border border-slate-700 bg-slate-800"}`}>
                 <Calendar
                   value={selectedDate}
                   onChange={handleDateSelect}
@@ -1033,7 +1164,7 @@ export default function App() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDelete(entry)}
+                          onClick={() => requestDeleteEntry(entry)}
                           className="rounded-md bg-rose-500/20 px-2 py-1 text-rose-300 hover:bg-rose-500/30"
                         >
                           Delete
@@ -1044,6 +1175,243 @@ export default function App() {
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {activeTab === "journal" && (
+          <div
+            className={`rounded-2xl p-6 shadow ${
+              themeMode === "light"
+                ? "border border-slate-200 bg-white"
+                : "border border-slate-800 bg-slate-900"
+            }`}
+          >
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h3 className={`text-xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>
+                Saved Weekly Journals
+              </h3>
+              <span className={`text-sm ${themeMode === "light" ? "text-slate-600" : "text-slate-400"}`}>
+                {weeklyJournalHistory.length} saved
+              </span>
+            </div>
+
+            {weeklyJournalHistory.length === 0 ? (
+              <p className={themeMode === "light" ? "text-slate-600" : "text-slate-400"}>
+                No weekly journals saved yet. Use Save Weekly Journal in Dashboard.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {weeklyJournalHistory.map((item) => (
+                  <div
+                    key={item.key}
+                    className={`rounded-xl p-4 ${
+                      themeMode === "light"
+                        ? "border border-slate-200 bg-slate-50"
+                        : "border border-slate-700 bg-slate-800"
+                    }`}
+                  >
+                    {editingJournalKey === item.key ? (
+                      <div className="space-y-3">
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div>
+                            <label className={`mb-1 block text-xs font-semibold ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>
+                              Date From
+                            </label>
+                            <input
+                              type="date"
+                              value={journalEditForm.from}
+                              onChange={(e) => setJournalEditForm((prev) => ({ ...prev, from: e.target.value }))}
+                              className={`w-full rounded-lg px-2 py-2 text-sm ${
+                                themeMode === "light"
+                                  ? "border border-slate-300 bg-white text-slate-900"
+                                  : "border border-slate-700 bg-slate-800 text-slate-100"
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className={`mb-1 block text-xs font-semibold ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>
+                              Date To
+                            </label>
+                            <input
+                              type="date"
+                              value={journalEditForm.to}
+                              onChange={(e) => setJournalEditForm((prev) => ({ ...prev, to: e.target.value }))}
+                              className={`w-full rounded-lg px-2 py-2 text-sm ${
+                                themeMode === "light"
+                                  ? "border border-slate-300 bg-white text-slate-900"
+                                  : "border border-slate-700 bg-slate-800 text-slate-100"
+                              }`}
+                            />
+                          </div>
+                        </div>
+                        <textarea
+                          value={journalEditForm.note}
+                          onChange={(e) => setJournalEditForm((prev) => ({ ...prev, note: e.target.value }))}
+                          rows={4}
+                          className={`w-full rounded-lg px-3 py-2 text-sm ${
+                            themeMode === "light"
+                              ? "border border-slate-300 bg-white text-slate-900"
+                              : "border border-slate-700 bg-slate-800 text-slate-100"
+                          }`}
+                        />
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={cancelEditWeeklyJournalFromHistory}
+                            className={
+                              themeMode === "light"
+                                ? "rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                                : "rounded-md bg-slate-700 px-3 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-600"
+                            }
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={saveEditedWeeklyJournalFromHistory}
+                            className="rounded-md bg-cyan-500 px-3 py-1 text-xs font-semibold text-slate-950 hover:bg-cyan-400"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mb-2 flex items-start justify-between gap-3">
+                          <div className={`text-sm font-semibold ${themeMode === "light" ? "text-slate-800" : "text-slate-200"}`}>
+                            {item.from} to {item.to}
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => startEditWeeklyJournalFromHistory(item)}
+                              className={
+                                themeMode === "light"
+                                  ? "rounded-md bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-200"
+                                  : "rounded-md bg-cyan-500/20 px-2 py-1 text-xs font-semibold text-cyan-300 hover:bg-cyan-500/30"
+                              }
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => requestDeleteWeeklyJournalFromHistory(item)}
+                              className={
+                                themeMode === "light"
+                                  ? "rounded-md bg-rose-100 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-200"
+                                  : "rounded-md bg-rose-500/20 px-2 py-1 text-xs font-semibold text-rose-300 hover:bg-rose-500/30"
+                              }
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                        <p className={`whitespace-pre-wrap text-sm ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>
+                          {item.note}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {journalDeleteTarget && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={() => setJournalDeleteTarget(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              onClick={(e) => e.stopPropagation()}
+              className={`w-full max-w-md rounded-2xl p-6 shadow ${
+                themeMode === "light"
+                  ? "border border-slate-200 bg-white"
+                  : "border border-slate-700 bg-slate-900"
+              }`}
+            >
+              <h3 className={`mb-2 text-xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>
+                Delete Weekly Journal
+              </h3>
+              <p className={`mb-4 text-sm ${themeMode === "light" ? "text-slate-600" : "text-slate-400"}`}>
+                Are you sure you want to delete this journal entry for
+                <span className={`ml-1 font-semibold ${themeMode === "light" ? "text-slate-800" : "text-slate-200"}`}>
+                  {journalDeleteTarget.from} to {journalDeleteTarget.to}
+                </span>
+                ?
+              </p>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setJournalDeleteTarget(null)}
+                  className={`flex-1 rounded-lg py-2 font-semibold ${
+                    themeMode === "light"
+                      ? "border border-slate-300 bg-slate-100 text-slate-800 hover:bg-slate-200"
+                      : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteWeeklyJournalFromHistory}
+                  className="flex-1 rounded-lg bg-rose-500 py-2 font-semibold text-white hover:bg-rose-600"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {entryDeleteTarget && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={() => setEntryDeleteTarget(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              onClick={(e) => e.stopPropagation()}
+              className={`w-full max-w-md rounded-2xl p-6 shadow ${
+                themeMode === "light"
+                  ? "border border-slate-200 bg-white"
+                  : "border border-slate-700 bg-slate-900"
+              }`}
+            >
+              <h3 className={`mb-2 text-xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>
+                Delete OJT Entry
+              </h3>
+              <p className={`mb-2 text-sm ${themeMode === "light" ? "text-slate-600" : "text-slate-400"}`}>
+                Are you sure you want to delete this entry?
+              </p>
+              <p className={`mb-4 text-sm font-semibold ${themeMode === "light" ? "text-slate-800" : "text-slate-200"}`}>
+                {entryDeleteTarget.date} • {formatTimeDisplay(entryDeleteTarget.timeIn)} - {formatTimeDisplay(entryDeleteTarget.timeOut)}
+              </p>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEntryDeleteTarget(null)}
+                  className={`flex-1 rounded-lg py-2 font-semibold ${
+                    themeMode === "light"
+                      ? "border border-slate-300 bg-slate-100 text-slate-800 hover:bg-slate-200"
+                      : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteEntry}
+                  className="flex-1 rounded-lg bg-rose-500 py-2 font-semibold text-white hover:bg-rose-600"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
           </div>
         )}
 
@@ -1601,6 +1969,21 @@ export default function App() {
         .calendar-wrapper :global(.react-calendar__tile--now) {
           background: rgba(34, 211, 238, 0.2);
           color: #67e8f9;
+        }
+        .calendar-wrapper--large :global(.react-calendar) {
+          font-size: 1.05rem;
+        }
+        .calendar-wrapper--large :global(.react-calendar__navigation) {
+          height: 56px;
+          margin-bottom: 10px;
+        }
+        .calendar-wrapper--large :global(.react-calendar__navigation button) {
+          min-width: 50px;
+          font-size: 1rem;
+        }
+        .calendar-wrapper--large :global(.react-calendar__tile) {
+          min-height: 52px;
+          padding: 0.65rem 0.4rem;
         }
       `}</style>
     </div>
