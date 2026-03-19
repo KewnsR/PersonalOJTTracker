@@ -20,13 +20,12 @@ const normalizeApiUrl = (rawUrl) => {
   return /\/api$/i.test(value) ? value : `${value}/api`;
 };
 
-const API_URL =
-  normalizeApiUrl(import.meta.env.VITE_API_URL) ||
-  (typeof window !== "undefined" && window.location?.hostname === "localhost"
-    ? "http://localhost:5000/api"
-    : typeof window !== "undefined"
-      ? `${window.location.origin}/api`
-      : "http://localhost:5000/api");
+const configuredApiUrl = normalizeApiUrl(import.meta.env.VITE_API_URL);
+const isLocalFrontend =
+  typeof window !== "undefined" &&
+  (window.location?.hostname === "localhost" || window.location?.hostname === "127.0.0.1");
+
+const API_URL = configuredApiUrl || (isLocalFrontend ? "http://localhost:5000/api" : "");
 const AUTH_TOKEN_STORAGE_KEY = "ojtAuthToken";
 const AUTH_USER_STORAGE_KEY = "ojtAuthUser";
 
@@ -76,6 +75,7 @@ const errorToText = (value) => {
 const hasPlaceholderApiUrl = /your-backend\.onrender\.com|example\.com|<backend-url>/i.test(
   API_URL
 );
+const hasMissingHostedApiUrl = !configuredApiUrl && !isLocalFrontend;
 
 export default function App() {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "");
@@ -287,6 +287,13 @@ export default function App() {
     setAuthLoading(true);
 
     try {
+      if (hasMissingHostedApiUrl) {
+        setError(
+          "Backend URL is not configured for this deployed app. Set VITE_API_URL to your public backend URL and redeploy."
+        );
+        return;
+      }
+
       if (authMode === "signup") {
         if (!authForm.username || !authForm.name || !authForm.email || !authForm.password) {
           setError("Please fill in username, full name, email, and password.");
@@ -345,6 +352,13 @@ export default function App() {
     setGoogleLoading(true);
 
     try {
+      if (hasMissingHostedApiUrl) {
+        setError(
+          "Google sign in backend URL is missing. Set VITE_API_URL to your public backend URL and redeploy."
+        );
+        return;
+      }
+
       if (hasPlaceholderApiUrl) {
         setError(
           "Google sign in backend URL is still placeholder. Set VITE_API_URL to your real public backend URL ending with /api, then redeploy."
