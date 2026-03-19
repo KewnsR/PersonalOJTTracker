@@ -361,7 +361,13 @@ export default function App() {
           "Google sign-in configuration is missing. In Firebase Console > Authentication > Sign-in method, enable Google provider and set a project support email, then retry."
         );
       } else if (firebaseCode === "auth/unauthorized-domain") {
-        setError("This domain is not authorized for Firebase Auth. Add localhost to Authentication > Settings > Authorized domains.");
+        const currentHost =
+          typeof window !== "undefined" && window.location?.hostname
+            ? window.location.hostname
+            : "your app domain";
+        setError(
+          `This domain is not authorized for Firebase Auth. Add ${currentHost} in Firebase Authentication > Settings > Authorized domains.`
+        );
       } else if (firebaseCode === "auth/popup-blocked") {
         setError("Google popup was blocked by the browser. Allow popups and try again.");
       } else if (firebaseCode === "auth/popup-closed-by-user") {
@@ -885,14 +891,14 @@ export default function App() {
 
   if (!authToken) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-100 p-4 md:p-8">
+      <div className="min-h-screen bg-gradient-to-br from-[#000b2f] via-[#001341] to-[#000a2b] p-4 md:p-8">
         <div className="mx-auto flex min-h-[85vh] max-w-md items-center">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             className="w-full rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
           >
-            <h1 className="text-3xl font-black text-blue-600">OJT Tracker</h1>
+            <h1 className="text-3xl font-black text-blue-600">Welcome</h1>
             <p className="mt-2 text-sm text-slate-600">
               {authMode === "signup"
                 ? "Create an account to start tracking your OJT hours."
