@@ -14,8 +14,14 @@ import {
 } from "recharts";
 import "react-calendar/dist/Calendar.css";
 
+const normalizeApiUrl = (rawUrl) => {
+  const value = String(rawUrl || "").trim().replace(/\/+$/, "");
+  if (!value) return "";
+  return /\/api$/i.test(value) ? value : `${value}/api`;
+};
+
 const API_URL =
-  import.meta.env.VITE_API_URL ||
+  normalizeApiUrl(import.meta.env.VITE_API_URL) ||
   (typeof window !== "undefined" && window.location?.hostname === "localhost"
     ? "http://localhost:5000/api"
     : typeof window !== "undefined"
@@ -384,6 +390,10 @@ export default function App() {
         } else if (String(backendMessage).toLowerCase().includes("no firestore database exists yet")) {
           setError(
             "Google sign in failed: Firestore database is not created yet. Create Firestore Database in Firebase Console, then retry."
+          );
+        } else if (String(backendMessage).toLowerCase().includes("the page could not be found")) {
+          setError(
+            "Google sign in failed: backend route not found. Set VITE_API_URL to your backend base URL (with or without /api), redeploy, then verify /api/health works."
           );
         } else {
           setError(`Google sign in failed: ${backendMessage}`);
