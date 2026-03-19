@@ -1781,6 +1781,18 @@ export default function App() {
                 </button>
               </div>
             </motion.div>
+
+            <footer className="pointer-events-none fixed inset-x-0 bottom-3 z-40 flex justify-center">
+              <p
+                className={
+                  themeMode === "light"
+                    ? "rounded-full border border-slate-300 bg-white/90 px-3 py-1 text-xs text-slate-600 shadow"
+                    : "rounded-full border border-slate-700 bg-slate-900/90 px-3 py-1 text-xs text-slate-300 shadow"
+                }
+              >
+                Version 1.0
+              </p>
+            </footer>
           </div>
         )}
 
