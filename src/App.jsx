@@ -315,13 +315,17 @@ export default function App() {
 
     try {
       if (!isFirebaseConfigured) {
-        setError("Google sign in is not configured. Set Firebase web env values first.");
+        setError(
+          "Google sign in is not configured. On Vercel, add VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, and VITE_FIREBASE_APP_ID in Project Settings > Environment Variables, then redeploy."
+        );
         return;
       }
 
       const firebaseAuth = getFirebaseAuthClient();
       if (!firebaseAuth) {
-        setError("Google sign in is not configured. Set Firebase web env values first.");
+        setError(
+          "Google sign in is not configured. On Vercel, add VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, and VITE_FIREBASE_APP_ID in Project Settings > Environment Variables, then redeploy."
+        );
         return;
       }
 
