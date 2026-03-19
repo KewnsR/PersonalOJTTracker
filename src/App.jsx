@@ -361,7 +361,7 @@ export default function App() {
 
       if (hasPlaceholderApiUrl) {
         setError(
-          "Google sign in backend URL is still placeholder. Set VITE_API_URL to your real public backend URL ending with /api, then redeploy."
+          `Google sign in backend URL is still placeholder. Current VITE_API_URL: ${configuredApiUrl || "(empty)"}. In Vercel Project Settings > Environment Variables, set VITE_API_URL to your real public backend URL (or backend root), include Production scope, then redeploy.`
         );
         return;
       }
