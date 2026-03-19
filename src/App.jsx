@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import Calendar from "react-calendar";
 import axios from "axios";
+import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
+import { getFirebaseAuthClient, isFirebaseConfigured } from "./firebase";
 import {
   LineChart,
   Line,
@@ -12,7 +14,9 @@ import {
 } from "recharts";
 import "react-calendar/dist/Calendar.css";
 
-const API_URL = "http://localhost:5000/api";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const AUTH_TOKEN_STORAGE_KEY = "ojtAuthToken";
+const AUTH_USER_STORAGE_KEY = "ojtAuthUser";
 
 const toLocalDateString = (date) => {
   const year = date.getFullYear();
@@ -43,6 +47,24 @@ const getEndOfWeek = (date) => {
 };
 
 export default function App() {
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "");
+  const [authUser, setAuthUser] = useState(() => {
+    const stored = localStorage.getItem(AUTH_USER_STORAGE_KEY);
+    return stored ? JSON.parse(stored) : null;
+  });
+  const [authMode, setAuthMode] = useState("login");
+  const [authForm, setAuthForm] = useState({
+    username: "",
+    name: "",
+    identifier: "",
+    email: "",
+    password: "",
+  });
+  const [authLoading, setAuthLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [showAuthPassword, setShowAuthPassword] = useState(false);
+  const [showLoginSplash, setShowLoginSplash] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [entries, setEntries] = useState([]);
   const [form, setForm] = useState({
     date: toLocalDateString(new Date()),
@@ -101,17 +123,50 @@ export default function App() {
   const [journalDeleteTarget, setJournalDeleteTarget] = useState(null);
   const [entryDeleteTarget, setEntryDeleteTarget] = useState(null);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  const applyAuthHeader = (token) => {
+    if (token) {
+      axios.defaults.headers.common.Authorization = `Bearer ${token}`;
+    } else {
+      delete axios.defaults.headers.common.Authorization;
+    }
+  };
 
-  const loadData = async () => {
+  useEffect(() => {
+    applyAuthHeader(authToken);
+    if (authToken) {
+      loadData(authToken);
+    } else {
+      setLoading(false);
+    }
+  }, [authToken]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    setProfile((prev) => ({
+      ...prev,
+      name: authUser.name || prev.name,
+      email: authUser.email || prev.email,
+    }));
+    setProfileForm((prev) => ({
+      ...prev,
+      name: authUser.name || prev.name,
+      email: authUser.email || prev.email,
+    }));
+  }, [authUser]);
+
+  const loadData = async (token = authToken) => {
     try {
       setLoading(true);
       const [entriesRes, prefsRes, profileRes] = await Promise.all([
-        axios.get(`${API_URL}/entries`),
-        axios.get(`${API_URL}/preferences`),
-        axios.get(`${API_URL}/profile`),
+        axios.get(`${API_URL}/entries`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        }),
+        axios.get(`${API_URL}/preferences`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        }),
+        axios.get(`${API_URL}/profile`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        }),
       ]);
 
       setEntries(entriesRes.data || []);
@@ -119,9 +174,11 @@ export default function App() {
       const prefs = prefsRes.data || {};
       setLunchStart(prefs.lunchStartHour ?? prefs.lunchStart ?? 11);
       setLunchEnd(prefs.lunchEndHour ?? prefs.lunchEnd ?? 12);
+      const hasConfiguredGoal = prefs.requiredOjtHours !== undefined && prefs.requiredOjtHours !== null;
       const savedRequiredHours = prefs.requiredOjtHours ?? 600;
       setRequiredOjtHours(savedRequiredHours);
       setGoalInput(String(savedRequiredHours));
+      setShowLoginSplash(!hasConfiguredGoal);
       const savedWeeklyJournal = prefs.weeklyJournalNotes || {};
       setWeeklyJournalNotes(savedWeeklyJournal);
       const savedThemeMode = prefs.themeMode || localStorage.getItem("themeMode") || "dark";
@@ -131,7 +188,13 @@ export default function App() {
         setProfile(profileRes.data);
         setProfileForm(profileRes.data);
       }
-    } catch {
+    } catch (loadError) {
+      if (loadError?.response?.status === 401) {
+        persistAuth("", null);
+        setLoading(false);
+        return;
+      }
+
       const stored = localStorage.getItem("ojtData");
       const prefs = localStorage.getItem("lunchBreak");
       const goalPrefs = localStorage.getItem("ojtGoal");
@@ -158,6 +221,9 @@ export default function App() {
       if (savedThemeMode) {
         setThemeMode(savedThemeMode === "light" ? "light" : "dark");
       }
+      if (!goalPrefs) {
+        setShowLoginSplash(true);
+      }
       if (savedProfile) {
         const p = JSON.parse(savedProfile);
         setProfile(p);
@@ -166,6 +232,168 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const persistAuth = (token, user) => {
+    applyAuthHeader(token || "");
+    setAuthToken(token || "");
+    setAuthUser(user || null);
+    if (token) {
+      localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+    } else {
+      localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    }
+    if (user) {
+      localStorage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(AUTH_USER_STORAGE_KEY);
+    }
+  };
+
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setAuthLoading(true);
+
+    try {
+      if (authMode === "signup") {
+        if (!authForm.username || !authForm.name || !authForm.email || !authForm.password) {
+          setError("Please fill in username, full name, email, and password.");
+          return;
+        }
+
+        const res = await axios.post(`${API_URL}/auth/signup`, {
+          username: authForm.username,
+          name: authForm.name,
+          email: authForm.email,
+          password: authForm.password,
+        });
+
+        persistAuth(res.data?.token, res.data?.user);
+      } else {
+        if (!authForm.identifier || !authForm.password) {
+          setError("Please enter your username/email and password.");
+          return;
+        }
+
+        const res = await axios.post(`${API_URL}/auth/login`, {
+          identifier: authForm.identifier,
+          email: authForm.identifier,
+          password: authForm.password,
+        });
+
+        persistAuth(res.data?.token, res.data?.user);
+      }
+    } catch (authError) {
+      if (!authError?.response) {
+        setError("Cannot connect to server. Start backend on http://localhost:5000 and try again.");
+        return;
+      }
+
+      const message =
+        authError?.response?.data?.error ||
+        (authMode === "signup" ? "Sign up failed." : "Login failed.");
+      if (String(message).toLowerCase().includes("no firestore database exists yet")) {
+        setError(
+          "Firestore database is not created yet. In Firebase Console, open Firestore Database and create the default database, then retry login/signup."
+        );
+      } else if (String(message).toLowerCase().includes("cloud firestore api is disabled")) {
+        setError(
+          "Cloud Firestore API is disabled for your Firebase project. Enable Firestore API in Google Cloud Console and wait a few minutes before retrying login/signup."
+        );
+      } else {
+        setError(message);
+      }
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setError("");
+    setGoogleLoading(true);
+
+    try {
+      if (!isFirebaseConfigured) {
+        setError("Google sign in is not configured. Set Firebase web env values first.");
+        return;
+      }
+
+      const firebaseAuth = getFirebaseAuthClient();
+      if (!firebaseAuth) {
+        setError("Google sign in is not configured. Set Firebase web env values first.");
+        return;
+      }
+
+      const provider = new GoogleAuthProvider();
+      const userCredential = await signInWithPopup(firebaseAuth, provider);
+      const firebaseIdToken = await userCredential.user.getIdToken();
+
+      const res = await axios.post(`${API_URL}/auth/google`, {
+        firebaseIdToken,
+      });
+
+      persistAuth(res.data?.token, res.data?.user);
+    } catch (authError) {
+      const firebaseCode = authError?.code || "";
+      const backendMessage = authError?.response?.data?.error;
+
+      if (backendMessage) {
+        if (String(backendMessage).toLowerCase().includes("cloud firestore api is disabled")) {
+          setError(
+            "Google sign in failed: Cloud Firestore API is disabled for your project. Enable Firestore API in Google Cloud Console, then retry after propagation."
+          );
+        } else if (String(backendMessage).toLowerCase().includes("no firestore database exists yet")) {
+          setError(
+            "Google sign in failed: Firestore database is not created yet. Create Firestore Database in Firebase Console, then retry."
+          );
+        } else {
+          setError(`Google sign in failed: ${backendMessage}`);
+        }
+      } else if (firebaseCode === "auth/operation-not-allowed") {
+        setError("Google sign-in is disabled in Firebase Console. Enable Google provider in Authentication > Sign-in method.");
+      } else if (firebaseCode === "auth/configuration-not-found") {
+        setError(
+          "Google sign-in configuration is missing. In Firebase Console > Authentication > Sign-in method, enable Google provider and set a project support email, then retry."
+        );
+      } else if (firebaseCode === "auth/unauthorized-domain") {
+        setError("This domain is not authorized for Firebase Auth. Add localhost to Authentication > Settings > Authorized domains.");
+      } else if (firebaseCode === "auth/popup-blocked") {
+        setError("Google popup was blocked by the browser. Allow popups and try again.");
+      } else if (firebaseCode === "auth/popup-closed-by-user") {
+        setError("Google sign-in popup was closed before completing login.");
+      } else if (!authError?.response) {
+        try {
+          await axios.get(`${API_URL}/health`, {
+            timeout: 3000,
+            validateStatus: () => true,
+          });
+          setError(
+            `Google sign in failed: ${authError?.message || "Network or popup error during Google authentication."}`
+          );
+        } catch {
+          setError("Google sign in failed: backend API is unreachable. Start the server on http://localhost:5000.");
+        }
+      } else {
+        setError(`Google sign in failed: ${firebaseCode || "Unknown error"}`);
+      }
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const requestLogout = () => {
+    setShowProfileDropdown(false);
+    setShowLogoutConfirm(true);
+  };
+
+  const handleLogout = () => {
+    persistAuth("", null);
+    setEntries([]);
+    setShowProfileDropdown(false);
+    setShowLogoutConfirm(false);
+    setShowLoginSplash(false);
+    setError("");
   };
 
   const calculateHours = (timeIn, timeOut, lunchStartHour, lunchEndHour) => {
@@ -423,6 +651,34 @@ export default function App() {
     setShowGoalModal(false);
   };
 
+  const saveInitialGoalSetup = async () => {
+    const parsedRequiredHours = Number(goalInput);
+
+    if (!Number.isFinite(parsedRequiredHours) || parsedRequiredHours <= 0) {
+      setError("Required OJT hours must be a valid number greater than 0.");
+      return;
+    }
+
+    try {
+      await axios.put(`${API_URL}/preferences`, {
+        lunchStartHour: lunchStart,
+        lunchEndHour: lunchEnd,
+        requiredOjtHours: parsedRequiredHours,
+      });
+    } catch {
+      // local fallback only
+    }
+
+    setRequiredOjtHours(parsedRequiredHours);
+    setShowGoalProgress(true);
+    localStorage.setItem(
+      "ojtGoal",
+      JSON.stringify({ requiredHours: parsedRequiredHours, showGoalProgress: true })
+    );
+    setShowLoginSplash(false);
+    setError("");
+  };
+
   const initials = useMemo(() => {
     const parts = (profile.name || "OJT Trainee").trim().split(/\s+/);
     return parts
@@ -623,6 +879,154 @@ export default function App() {
     setJournalToDate(toLocalDateString(getEndOfWeek(today)));
   };
 
+  if (!authToken) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-100 p-4 md:p-8">
+        <div className="mx-auto flex min-h-[85vh] max-w-md items-center">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="w-full rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+          >
+            <h1 className="text-3xl font-black text-blue-600">OJT Tracker</h1>
+            <p className="mt-2 text-sm text-slate-600">
+              {authMode === "signup"
+                ? "Create an account to start tracking your OJT hours."
+                : "Sign in using username/email or continue with Google."}
+            </p>
+
+            {error ? (
+              <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {error}
+              </div>
+            ) : null}
+
+            <form onSubmit={handleAuthSubmit} className="mt-5 space-y-3">
+              {authMode === "signup" ? (
+                <>
+                  <input
+                    type="text"
+                    value={authForm.username}
+                    onChange={(e) =>
+                      setAuthForm((prev) => ({ ...prev, username: e.target.value }))
+                    }
+                    placeholder="Username"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400"
+                  />
+                  <input
+                    type="text"
+                    value={authForm.name}
+                    onChange={(e) => setAuthForm((prev) => ({ ...prev, name: e.target.value }))}
+                    placeholder="Full Name"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400"
+                  />
+                  <input
+                    type="email"
+                    value={authForm.email}
+                    onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
+                    placeholder="Email"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400"
+                  />
+                </>
+              ) : (
+                <input
+                  type="text"
+                  value={authForm.identifier}
+                  onChange={(e) =>
+                    setAuthForm((prev) => ({ ...prev, identifier: e.target.value }))
+                  }
+                  placeholder="Username or Email"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400"
+                />
+              )}
+
+              <div className="relative">
+                <input
+                  type={showAuthPassword ? "text" : "password"}
+                  value={authForm.password}
+                  onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
+                  placeholder="Password"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pr-12 text-slate-900 placeholder-slate-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowAuthPassword((prev) => !prev)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                  aria-label={showAuthPassword ? "Hide password" : "Show password"}
+                  title={showAuthPassword ? "Hide password" : "Show password"}
+                >
+                  {showAuthPassword ? (
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      className="h-5 w-5"
+                    >
+                      <path d="M3 3l18 18" />
+                      <path d="M10.58 10.58a2 2 0 102.83 2.83" />
+                      <path d="M16.68 16.67A10.94 10.94 0 0112 18C7 18 3 12 3 12a21.77 21.77 0 014.22-4.94" />
+                      <path d="M9.88 5.09A10.94 10.94 0 0112 5c5 0 9 7 9 7a21.83 21.83 0 01-1.67 2.68" />
+                    </svg>
+                  ) : (
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      className="h-5 w-5"
+                    >
+                      <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full rounded-lg bg-blue-600 px-3 py-2 font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {authLoading
+                  ? authMode === "signup"
+                    ? "Creating account..."
+                    : "Signing in..."
+                  : authMode === "signup"
+                    ? "Create Account"
+                    : "Sign In"}
+              </button>
+            </form>
+
+            <button
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={googleLoading}
+              className="mt-3 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {googleLoading ? "Connecting to Google..." : "Continue with Google"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setAuthMode((prev) => (prev === "login" ? "signup" : "login"));
+              }}
+              className="mt-4 w-full text-sm text-blue-600 hover:text-blue-700"
+            >
+              {authMode === "signup"
+                ? "Already have an account? Sign in"
+                : "No account yet? Sign up"}
+            </button>
+          </motion.div>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className={`min-h-screen flex items-center justify-center ${
@@ -730,6 +1134,19 @@ export default function App() {
                     Settings
                   </button>
                 </div>
+                <div className={`px-4 pb-4 ${themeMode === "light" ? "border-t border-slate-200" : "border-t border-slate-800"}`}>
+                  <button
+                    type="button"
+                    onClick={requestLogout}
+                    className={
+                      themeMode === "light"
+                        ? "mt-3 w-full rounded-lg bg-rose-100 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-200"
+                        : "mt-3 w-full rounded-lg bg-rose-500/20 px-3 py-2 text-sm font-semibold text-rose-300 hover:bg-rose-500/30"
+                    }
+                  >
+                    Logout
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -783,7 +1200,7 @@ export default function App() {
                   : "text-slate-300 hover:bg-slate-800"
             }`}
           >
-            Weekly Journal
+            Weekly Report
           </button>
         </div>
 
@@ -872,7 +1289,7 @@ export default function App() {
             <motion.div
               key={item.label}
               whileHover={{ y: -3 }}
-              className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow"
+              className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow transition-shadow hover:shadow-lg"
             >
               <div className="text-sm text-slate-400">{item.label}</div>
               <div className="text-3xl font-bold text-slate-100">{item.value}</div>
@@ -880,7 +1297,7 @@ export default function App() {
           ))}
             </div>
 
-            <div className="mb-8 rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow">
+            <div className="mb-8 rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow transition-shadow hover:shadow-lg">
           <h3 className="mb-4 text-xl font-bold text-slate-100">Overall Hours Trend</h3>
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={overallTrendData}>
@@ -905,123 +1322,6 @@ export default function App() {
           </ResponsiveContainer>
             </div>
 
-            <div
-              className={`mb-8 rounded-2xl p-6 shadow ${
-                themeMode === "light"
-                  ? "border border-slate-200 bg-white"
-                  : "border border-slate-800 bg-slate-900"
-              }`}
-            >
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <h3 className={`text-xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>
-                  Weekly Journal
-                </h3>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => shiftJournalRangeByDays(-7)}
-                    className={`rounded-md px-3 py-1 text-sm font-semibold ${
-                      themeMode === "light"
-                        ? "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                        : "bg-slate-800 text-slate-200 hover:bg-slate-700"
-                    }`}
-                  >
-                    Prev
-                  </button>
-                  <button
-                    type="button"
-                    onClick={setJournalToCurrentWeek}
-                    className={`rounded-md px-3 py-1 text-sm font-semibold ${
-                      themeMode === "light"
-                        ? "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                        : "bg-slate-800 text-slate-200 hover:bg-slate-700"
-                    }`}
-                  >
-                    This Week
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => shiftJournalRangeByDays(7)}
-                    className={`rounded-md px-3 py-1 text-sm font-semibold ${
-                      themeMode === "light"
-                        ? "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                        : "bg-slate-800 text-slate-200 hover:bg-slate-700"
-                    }`}
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-
-              <p className={`mb-3 text-sm ${themeMode === "light" ? "text-slate-600" : "text-slate-400"}`}>
-                Week: {currentWeekLabel}
-              </p>
-              <div className="mb-3 grid gap-3 md:grid-cols-2">
-                <div>
-                  <label className={`mb-1 block text-sm font-semibold ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>
-                    Date From
-                  </label>
-                  <input
-                    type="date"
-                    value={journalFromDate}
-                    onChange={(e) => {
-                      const nextFrom = e.target.value;
-                      setJournalFromDate(nextFrom);
-                      if (nextFrom > journalToDate) {
-                        setJournalToDate(nextFrom);
-                      }
-                    }}
-                    className={`w-full rounded-lg px-3 py-2 ${
-                      themeMode === "light"
-                        ? "border border-slate-300 bg-white text-slate-900"
-                        : "border border-slate-700 bg-slate-800 text-slate-100"
-                    }`}
-                  />
-                </div>
-                <div>
-                  <label className={`mb-1 block text-sm font-semibold ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>
-                    Date To
-                  </label>
-                  <input
-                    type="date"
-                    value={journalToDate}
-                    onChange={(e) => {
-                      const nextTo = e.target.value;
-                      setJournalToDate(nextTo);
-                      if (nextTo < journalFromDate) {
-                        setJournalFromDate(nextTo);
-                      }
-                    }}
-                    className={`w-full rounded-lg px-3 py-2 ${
-                      themeMode === "light"
-                        ? "border border-slate-300 bg-white text-slate-900"
-                        : "border border-slate-700 bg-slate-800 text-slate-100"
-                    }`}
-                  />
-                </div>
-              </div>
-              <textarea
-                value={journalInput}
-                onChange={(e) => setJournalInput(e.target.value)}
-                placeholder="Write your weekly accomplishments, blockers, and plans..."
-                rows={6}
-                className={`w-full rounded-lg px-3 py-2 placeholder-slate-500 ${
-                  themeMode === "light"
-                    ? "border border-slate-300 bg-white text-slate-900"
-                    : "border border-slate-700 bg-slate-800 text-slate-100"
-                }`}
-              />
-              <div className="mt-3 flex justify-end">
-                <button
-                  type="button"
-                  onClick={saveWeeklyJournal}
-                  className="rounded-lg bg-cyan-500 px-4 py-2 font-semibold text-slate-950 hover:bg-cyan-400"
-                >
-                  Save Weekly Journal
-                </button>
-              </div>
-            </div>
-
             <button
           type="button"
           onClick={openAddModal}
@@ -1035,7 +1335,7 @@ export default function App() {
                 themeMode === "light"
                   ? "border border-slate-200 bg-white"
                   : "border border-slate-800 bg-slate-900"
-              }`}
+              } transition-shadow hover:shadow-lg`}
             >
           <div className={`px-6 py-4 ${themeMode === "light" ? "border-b border-slate-200" : "border-b border-slate-800"}`}>
             <h3 className={`text-xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>
@@ -1186,9 +1486,126 @@ export default function App() {
                 : "border border-slate-800 bg-slate-900"
             }`}
           >
+            <div
+              className={`mb-8 rounded-2xl p-6 shadow ${
+                themeMode === "light"
+                  ? "border border-slate-200 bg-slate-50"
+                  : "border border-slate-700 bg-slate-800/40"
+              }`}
+            >
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h3 className={`text-xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>
+                  Weekly Report
+                </h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => shiftJournalRangeByDays(-7)}
+                    className={`rounded-md px-3 py-1 text-sm font-semibold ${
+                      themeMode === "light"
+                        ? "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                        : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+                    }`}
+                  >
+                    Prev
+                  </button>
+                  <button
+                    type="button"
+                    onClick={setJournalToCurrentWeek}
+                    className={`rounded-md px-3 py-1 text-sm font-semibold ${
+                      themeMode === "light"
+                        ? "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                        : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+                    }`}
+                  >
+                    This Week
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => shiftJournalRangeByDays(7)}
+                    className={`rounded-md px-3 py-1 text-sm font-semibold ${
+                      themeMode === "light"
+                        ? "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                        : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+                    }`}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+
+              <p className={`mb-3 text-sm ${themeMode === "light" ? "text-slate-600" : "text-slate-400"}`}>
+                Week: {currentWeekLabel}
+              </p>
+              <div className="mb-3 grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className={`mb-1 block text-sm font-semibold ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>
+                    Date From
+                  </label>
+                  <input
+                    type="date"
+                    value={journalFromDate}
+                    onChange={(e) => {
+                      const nextFrom = e.target.value;
+                      setJournalFromDate(nextFrom);
+                      if (nextFrom > journalToDate) {
+                        setJournalToDate(nextFrom);
+                      }
+                    }}
+                    className={`w-full rounded-lg px-3 py-2 ${
+                      themeMode === "light"
+                        ? "border border-slate-300 bg-white text-slate-900"
+                        : "border border-slate-700 bg-slate-800 text-slate-100"
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className={`mb-1 block text-sm font-semibold ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>
+                    Date To
+                  </label>
+                  <input
+                    type="date"
+                    value={journalToDate}
+                    onChange={(e) => {
+                      const nextTo = e.target.value;
+                      setJournalToDate(nextTo);
+                      if (nextTo < journalFromDate) {
+                        setJournalFromDate(nextTo);
+                      }
+                    }}
+                    className={`w-full rounded-lg px-3 py-2 ${
+                      themeMode === "light"
+                        ? "border border-slate-300 bg-white text-slate-900"
+                        : "border border-slate-700 bg-slate-800 text-slate-100"
+                    }`}
+                  />
+                </div>
+              </div>
+              <textarea
+                value={journalInput}
+                onChange={(e) => setJournalInput(e.target.value)}
+                placeholder="Write your weekly accomplishments, blockers, and plans..."
+                rows={6}
+                className={`w-full rounded-lg px-3 py-2 placeholder-slate-500 ${
+                  themeMode === "light"
+                    ? "border border-slate-300 bg-white text-slate-900"
+                    : "border border-slate-700 bg-slate-800 text-slate-100"
+                }`}
+              />
+              <div className="mt-3 flex justify-end">
+                <button
+                  type="button"
+                  onClick={saveWeeklyJournal}
+                  className="rounded-lg bg-cyan-500 px-4 py-2 font-semibold text-slate-950 hover:bg-cyan-400"
+                >
+                  Save Weekly Report
+                </button>
+              </div>
+            </div>
+
             <div className="mb-4 flex items-center justify-between gap-3">
               <h3 className={`text-xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>
-                Saved Weekly Journals
+                Saved Weekly Reports
               </h3>
               <span className={`text-sm ${themeMode === "light" ? "text-slate-600" : "text-slate-400"}`}>
                 {weeklyJournalHistory.length} saved
@@ -1197,7 +1614,7 @@ export default function App() {
 
             {weeklyJournalHistory.length === 0 ? (
               <p className={themeMode === "light" ? "text-slate-600" : "text-slate-400"}>
-                No weekly journals saved yet. Use Save Weekly Journal in Dashboard.
+                No weekly reports saved yet. Use Save Weekly Journal above.
               </p>
             ) : (
               <div className="space-y-3">
@@ -1815,177 +2232,120 @@ export default function App() {
             </motion.div>
           </div>
         )}
+
+        {showLoginSplash && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              onClick={(e) => e.stopPropagation()}
+              className={`w-full max-w-md rounded-2xl p-6 shadow-2xl ${
+                themeMode === "light"
+                  ? "border border-slate-200 bg-white"
+                  : "border border-slate-700 bg-slate-900"
+              }`}
+            >
+              <h3 className={`text-2xl font-black ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>
+                Setup Your OJT Goal
+              </h3>
+              <p className={`mt-3 text-sm ${themeMode === "light" ? "text-slate-600" : "text-slate-300"}`}>
+                Hi {profile.name || authUser?.name || "Trainee"}, set how many total OJT hours you need (example: 500 or 600).
+              </p>
+
+              <div className="mt-5 grid grid-cols-3 gap-2">
+                {[500, 600, 700].map((hoursPreset) => (
+                  <button
+                    key={hoursPreset}
+                    type="button"
+                    onClick={() => setGoalInput(String(hoursPreset))}
+                    className={`rounded-lg px-3 py-2 text-sm font-semibold ${
+                      Number(goalInput) === hoursPreset
+                        ? "bg-cyan-500 text-slate-950"
+                        : themeMode === "light"
+                          ? "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                          : "border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700"
+                    }`}
+                  >
+                    {hoursPreset}h
+                  </button>
+                ))}
+              </div>
+
+              <label className={`mt-4 mb-2 block text-sm font-semibold ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>
+                Required OJT Hours
+              </label>
+              <input
+                type="number"
+                min="1"
+                step="0.5"
+                value={goalInput}
+                onChange={(e) => setGoalInput(e.target.value)}
+                className={`w-full rounded-lg px-3 py-2 ${
+                  themeMode === "light"
+                    ? "border border-slate-300 bg-white text-slate-900"
+                    : "border border-slate-700 bg-slate-800 text-slate-100"
+                }`}
+              />
+
+              <button
+                type="button"
+                onClick={saveInitialGoalSetup}
+                className="mt-5 w-full rounded-lg bg-cyan-500 py-2 font-semibold text-slate-950 hover:bg-cyan-400"
+              >
+                Save and Continue
+              </button>
+            </motion.div>
+          </div>
+        )}
+
+        {showLogoutConfirm && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={() => setShowLogoutConfirm(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              onClick={(e) => e.stopPropagation()}
+              className={`w-full max-w-sm rounded-2xl p-6 shadow ${
+                themeMode === "light"
+                  ? "border border-slate-200 bg-white"
+                  : "border border-slate-700 bg-slate-900"
+              }`}
+            >
+              <h3 className={`text-xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>
+                Logout Confirmation
+              </h3>
+              <p className={`mt-2 text-sm ${themeMode === "light" ? "text-slate-600" : "text-slate-400"}`}>
+                Are you sure you want to logout?
+              </p>
+              <div className="mt-6 grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowLogoutConfirm(false)}
+                  className={`rounded-lg py-2 font-semibold ${
+                    themeMode === "light"
+                      ? "border border-slate-300 bg-slate-100 text-slate-800 hover:bg-slate-200"
+                      : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+                  }`}
+                >
+                  No
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="rounded-lg bg-rose-500 py-2 font-semibold text-white hover:bg-rose-600"
+                >
+                  Yes
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </motion.div>
 
-      <style>{`
-        [data-theme='light'] .text-slate-100 {
-          color: #0f172a !important;
-        }
-        [data-theme='light'] .text-slate-200,
-        [data-theme='light'] .text-slate-300 {
-          color: #334155 !important;
-        }
-        [data-theme='light'] .text-slate-400 {
-          color: #64748b !important;
-        }
-        [data-theme='light'] .text-cyan-300 {
-          color: #0369a1 !important;
-        }
-        [data-theme='light'] .text-amber-300 {
-          color: #a16207 !important;
-        }
-        [data-theme='light'] .text-rose-200 {
-          color: #b91c1c !important;
-        }
-        [data-theme='light'] .bg-slate-900 {
-          background-color: #ffffff !important;
-        }
-        [data-theme='light'] .bg-slate-800,
-        [data-theme='light'] .bg-slate-800\/60,
-        [data-theme='light'] .bg-slate-800\/70 {
-          background-color: #f8fafc !important;
-        }
-        [data-theme='light'] .border-slate-700,
-        [data-theme='light'] .border-slate-800 {
-          border-color: #e2e8f0 !important;
-        }
-        [data-theme='light'] .bg-rose-500\/10 {
-          background-color: #fee2e2 !important;
-        }
-        [data-theme='light'] .bg-black\/60 {
-          background-color: rgba(15, 23, 42, 0.35) !important;
-        }
-        [data-theme='light'] .placeholder-slate-500::placeholder {
-          color: #94a3b8 !important;
-        }
-        [data-theme='light'] .bg-slate-800\/70.text-slate-200,
-        [data-theme='light'] .bg-slate-800\/70 .text-slate-200 {
-          color: #334155 !important;
-        }
-        [data-theme='light'] .bg-cyan-500 {
-          background-color: #0284c7 !important;
-          color: #ffffff !important;
-        }
-        [data-theme='light'] .hover\:bg-cyan-400:hover {
-          background-color: #0369a1 !important;
-          color: #ffffff !important;
-        }
-        [data-theme='light'] .bg-cyan-500\/20 {
-          background-color: #e0f2fe !important;
-        }
-        [data-theme='light'] .text-slate-950 {
-          color: #ffffff !important;
-        }
-        .theme-switch {
-          position: relative;
-          width: 92px;
-          height: 42px;
-          border-radius: 9999px;
-          border: 1px solid #334155;
-          transition: all 0.25s ease;
-          display: inline-flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 0 10px;
-        }
-        .theme-switch--dark {
-          background: #0f172a;
-        }
-        .theme-switch--light {
-          background: #e2e8f0;
-          border-color: #cbd5e1;
-        }
-        .theme-switch__icon {
-          font-size: 16px;
-          line-height: 1;
-          user-select: none;
-          z-index: 1;
-        }
-        .theme-switch__icon--sun {
-          color: #2563eb;
-        }
-        .theme-switch__icon--moon {
-          color: #2563eb;
-        }
-        .theme-switch--dark .theme-switch__icon--sun {
-          color: #93c5fd;
-        }
-        .theme-switch--light .theme-switch__icon--moon {
-          color: #60a5fa;
-        }
-        .theme-switch__thumb {
-          position: absolute;
-          top: 3px;
-          left: 4px;
-          width: 34px;
-          height: 34px;
-          border-radius: 9999px;
-          background: linear-gradient(180deg, #ffffff, #d1d5db);
-          box-shadow: 0 2px 8px rgba(15, 23, 42, 0.35);
-          transition: transform 0.25s ease;
-        }
-        .theme-switch--dark .theme-switch__thumb {
-          transform: translateX(50px);
-          background: linear-gradient(180deg, #374151, #111827);
-        }
-        .calendar-wrapper :global(.react-calendar) {
-          width: 100%;
-          border: none;
-          background: transparent;
-          color: #e2e8f0;
-          font-family: inherit;
-        }
-        [data-theme='light'] .calendar-wrapper :global(.react-calendar) {
-          color: #0f172a;
-        }
-        .calendar-wrapper :global(.react-calendar__navigation button) {
-          color: #e2e8f0;
-          background: transparent;
-        }
-        [data-theme='light'] .calendar-wrapper :global(.react-calendar__navigation button) {
-          color: #0f172a;
-        }
-        .calendar-wrapper :global(.react-calendar__navigation button:hover) {
-          background: rgba(51, 65, 85, 0.6);
-          border-radius: 8px;
-        }
-        [data-theme='light'] .calendar-wrapper :global(.react-calendar__navigation button:hover) {
-          background: #e2e8f0;
-        }
-        .calendar-wrapper :global(.react-calendar__tile) {
-          color: #e2e8f0;
-          border-radius: 8px;
-        }
-        [data-theme='light'] .calendar-wrapper :global(.react-calendar__tile) {
-          color: #0f172a;
-        }
-        .calendar-wrapper :global(.react-calendar__tile:hover) {
-          background: rgba(14, 165, 233, 0.2);
-        }
-        .calendar-wrapper :global(.react-calendar__tile--active) {
-          background: linear-gradient(90deg, #22d3ee, #d946ef);
-          color: #0f172a;
-        }
-        .calendar-wrapper :global(.react-calendar__tile--now) {
-          background: rgba(34, 211, 238, 0.2);
-          color: #67e8f9;
-        }
-        .calendar-wrapper--large :global(.react-calendar) {
-          font-size: 1.05rem;
-        }
-        .calendar-wrapper--large :global(.react-calendar__navigation) {
-          height: 56px;
-          margin-bottom: 10px;
-        }
-        .calendar-wrapper--large :global(.react-calendar__navigation button) {
-          min-width: 50px;
-          font-size: 1rem;
-        }
-        .calendar-wrapper--large :global(.react-calendar__tile) {
-          min-height: 52px;
-          padding: 0.65rem 0.4rem;
-        }
-      `}</style>
     </div>
   );
 }

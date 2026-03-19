@@ -1,1 +1,169 @@
 @import "tailwindcss";
+
+[data-theme='light'] .text-slate-100 {
+	color: #0f172a !important;
+}
+[data-theme='light'] .text-slate-200,
+[data-theme='light'] .text-slate-300 {
+	color: #334155 !important;
+}
+[data-theme='light'] .text-slate-400 {
+	color: #64748b !important;
+}
+[data-theme='light'] .text-cyan-300 {
+	color: #0369a1 !important;
+}
+[data-theme='light'] .text-amber-300 {
+	color: #a16207 !important;
+}
+[data-theme='light'] .text-rose-200 {
+	color: #b91c1c !important;
+}
+[data-theme='light'] .bg-slate-900 {
+	background-color: #ffffff !important;
+}
+[data-theme='light'] .bg-slate-800,
+[data-theme='light'] .bg-slate-800\/60,
+[data-theme='light'] .bg-slate-800\/70 {
+	background-color: #f8fafc !important;
+}
+[data-theme='light'] .border-slate-700,
+[data-theme='light'] .border-slate-800 {
+	border-color: #e2e8f0 !important;
+}
+[data-theme='light'] .bg-rose-500\/10 {
+	background-color: #fee2e2 !important;
+}
+[data-theme='light'] .bg-black\/60 {
+	background-color: rgba(15, 23, 42, 0.35) !important;
+}
+[data-theme='light'] .placeholder-slate-500::placeholder {
+	color: #94a3b8 !important;
+}
+[data-theme='light'] .bg-slate-800\/70.text-slate-200,
+[data-theme='light'] .bg-slate-800\/70 .text-slate-200 {
+	color: #334155 !important;
+}
+[data-theme='light'] .bg-cyan-500 {
+	background-color: #0284c7 !important;
+	color: #ffffff !important;
+}
+[data-theme='light'] .hover\:bg-cyan-400:hover {
+	background-color: #0369a1 !important;
+	color: #ffffff !important;
+}
+[data-theme='light'] .bg-cyan-500\/20 {
+	background-color: #e0f2fe !important;
+}
+[data-theme='light'] .text-slate-950 {
+	color: #ffffff !important;
+}
+.theme-switch {
+	position: relative;
+	width: 92px;
+	height: 42px;
+	border-radius: 9999px;
+	border: 1px solid #334155;
+	transition: all 0.25s ease;
+	display: inline-flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0 10px;
+}
+.theme-switch--dark {
+	background: #0f172a;
+}
+.theme-switch--light {
+	background: #e2e8f0;
+	border-color: #cbd5e1;
+}
+.theme-switch__icon {
+	font-size: 16px;
+	line-height: 1;
+	user-select: none;
+	z-index: 1;
+}
+.theme-switch__icon--sun {
+	color: #2563eb;
+}
+.theme-switch__icon--moon {
+	color: #2563eb;
+}
+.theme-switch--dark .theme-switch__icon--sun {
+	color: #93c5fd;
+}
+.theme-switch--light .theme-switch__icon--moon {
+	color: #60a5fa;
+}
+.theme-switch__thumb {
+	position: absolute;
+	top: 3px;
+	left: 4px;
+	width: 34px;
+	height: 34px;
+	border-radius: 9999px;
+	background: linear-gradient(180deg, #ffffff, #d1d5db);
+	box-shadow: 0 2px 8px rgba(15, 23, 42, 0.35);
+	transition: transform 0.25s ease;
+}
+.theme-switch--dark .theme-switch__thumb {
+	transform: translateX(50px);
+	background: linear-gradient(180deg, #374151, #111827);
+}
+.calendar-wrapper .react-calendar {
+	width: 100%;
+	border: none;
+	background: transparent;
+	color: #e2e8f0;
+	font-family: inherit;
+}
+[data-theme='light'] .calendar-wrapper .react-calendar {
+	color: #0f172a;
+}
+.calendar-wrapper .react-calendar__navigation button {
+	color: #e2e8f0;
+	background: transparent;
+}
+[data-theme='light'] .calendar-wrapper .react-calendar__navigation button {
+	color: #0f172a;
+}
+.calendar-wrapper .react-calendar__navigation button:hover {
+	background: rgba(51, 65, 85, 0.6);
+	border-radius: 8px;
+}
+[data-theme='light'] .calendar-wrapper .react-calendar__navigation button:hover {
+	background: #e2e8f0;
+}
+.calendar-wrapper .react-calendar__tile {
+	color: #e2e8f0;
+	border-radius: 8px;
+}
+[data-theme='light'] .calendar-wrapper .react-calendar__tile {
+	color: #0f172a;
+}
+.calendar-wrapper .react-calendar__tile:hover {
+	background: rgba(14, 165, 233, 0.2);
+}
+.calendar-wrapper .react-calendar__tile--active {
+	background: linear-gradient(90deg, #22d3ee, #d946ef);
+	color: #0f172a;
+}
+.calendar-wrapper .react-calendar__tile--now {
+	background: rgba(34, 211, 238, 0.2);
+	color: #67e8f9;
+}
+.calendar-wrapper--large .react-calendar {
+	font-size: 1.05rem;
+}
+.calendar-wrapper--large .react-calendar__navigation {
+	height: 56px;
+	margin-bottom: 10px;
+}
+.calendar-wrapper--large .react-calendar__navigation button {
+	min-width: 50px;
+	font-size: 1rem;
+}
+.calendar-wrapper--large .react-calendar__tile {
+	min-height: 52px;
+	padding: 0.65rem 0.4rem;
+}
