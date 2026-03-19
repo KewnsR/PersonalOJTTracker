@@ -14,7 +14,13 @@ import {
 } from "recharts";
 import "react-calendar/dist/Calendar.css";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  (typeof window !== "undefined" && window.location?.hostname === "localhost"
+    ? "http://localhost:5000/api"
+    : typeof window !== "undefined"
+      ? `${window.location.origin}/api`
+      : "http://localhost:5000/api");
 const AUTH_TOKEN_STORAGE_KEY = "ojtAuthToken";
 const AUTH_USER_STORAGE_KEY = "ojtAuthUser";
 
@@ -382,7 +388,9 @@ export default function App() {
             `Google sign in failed: ${authError?.message || "Network or popup error during Google authentication."}`
           );
         } catch {
-          setError("Google sign in failed: backend API is unreachable. Start the server on http://localhost:5000.");
+          setError(
+            "Google sign in failed: backend API is unreachable. Set VITE_API_URL to your public backend URL (not localhost) and redeploy."
+          );
         }
       } else {
         setError(`Google sign in failed: ${firebaseCode || "Unknown error"}`);
