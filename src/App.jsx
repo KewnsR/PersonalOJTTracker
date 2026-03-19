@@ -52,6 +52,25 @@ const getEndOfWeek = (date) => {
   return end;
 };
 
+const errorToText = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object") {
+    if (typeof value.error === "string") return value.error;
+    if (typeof value.message === "string") return value.message;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "Unexpected error";
+    }
+  }
+  return String(value);
+};
+
+const hasPlaceholderApiUrl = /your-backend\.onrender\.com|example\.com|<backend-url>/i.test(
+  API_URL
+);
+
 export default function App() {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "");
   const [authUser, setAuthUser] = useState(() => {
@@ -320,6 +339,13 @@ export default function App() {
     setGoogleLoading(true);
 
     try {
+      if (hasPlaceholderApiUrl) {
+        setError(
+          "Google sign in backend URL is still placeholder. Set VITE_API_URL to your real public backend URL ending with /api, then redeploy."
+        );
+        return;
+      }
+
       if (!isFirebaseConfigured) {
         setError(
           "Google sign in is not configured. On Vercel, add VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, and VITE_FIREBASE_APP_ID in Project Settings > Environment Variables, then redeploy."
@@ -346,7 +372,9 @@ export default function App() {
       persistAuth(res.data?.token, res.data?.user);
     } catch (authError) {
       const firebaseCode = authError?.code || "";
-      const backendMessage = authError?.response?.data?.error;
+      const backendMessage = errorToText(
+        authError?.response?.data?.error ?? authError?.response?.data
+      );
 
       if (backendMessage) {
         if (String(backendMessage).toLowerCase().includes("cloud firestore api is disabled")) {
@@ -393,7 +421,9 @@ export default function App() {
           );
         }
       } else {
-        setError(`Google sign in failed: ${firebaseCode || "Unknown error"}`);
+        setError(
+          `Google sign in failed: ${firebaseCode || errorToText(authError?.message) || "Unknown error"}`
+        );
       }
     } finally {
       setGoogleLoading(false);
