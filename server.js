@@ -10,7 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 5000;
+const PORT = Number(process.env.PORT) || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret-in-production";
 
 // Middleware
@@ -27,9 +27,9 @@ app.use((req, res, next) => {
 
 // Firebase Initialization
 try {
-  const serviceAccount = JSON.parse(
-    fs.readFileSync(path.join(__dirname, "firebaseKey.json"), "utf8")
-  );
+  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
+    : JSON.parse(fs.readFileSync(path.join(__dirname, "firebaseKey.json"), "utf8"));
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
@@ -38,7 +38,9 @@ try {
   console.log("✓ Firebase connected");
 } catch (err) {
   console.error("✗ Firebase connection failed:", err.message);
-  console.log("Make sure firebaseKey.json exists in your project root");
+  console.log(
+    "Set FIREBASE_SERVICE_ACCOUNT_JSON (recommended for hosting) or ensure firebaseKey.json exists in project root"
+  );
 }
 
 const db = admin.firestore();
@@ -495,5 +497,5 @@ app.put("/api/profile", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`✓ OJT Tracker API running on http://localhost:${PORT}`);
+  console.log(`✓ OJT Tracker API running on port ${PORT}`);
 });
