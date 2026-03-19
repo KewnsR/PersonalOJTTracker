@@ -2,7 +2,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import Calendar from "react-calendar";
 import axios from "axios";
-import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
+import {
+  GoogleAuthProvider,
+  getRedirectResult,
+  signInWithPopup,
+  signInWithRedirect,
+} from "firebase/auth";
 import { getFirebaseAuthClient, isFirebaseConfigured } from "./firebase";
 import {
   LineChart,
@@ -76,6 +81,8 @@ const hasPlaceholderApiUrl = /your-backend\.onrender\.com|example\.com|<backend-
   API_URL
 );
 const hasMissingHostedApiUrl = !configuredApiUrl && !isLocalFrontend;
+const isMobileDevice =
+  typeof navigator !== "undefined" && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 
 export default function App() {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "");
@@ -184,6 +191,106 @@ export default function App() {
       email: authUser.email || prev.email,
     }));
   }, [authUser]);
+
+  const handleGoogleAuthError = async (authError) => {
+    const firebaseCode = authError?.code || "";
+    const backendMessage = errorToText(authError?.response?.data?.error ?? authError?.response?.data);
+
+    if (backendMessage) {
+      if (String(backendMessage).toLowerCase().includes("cloud firestore api is disabled")) {
+        setError(
+          "Google sign in failed: Cloud Firestore API is disabled for your project. Enable Firestore API in Google Cloud Console, then retry after propagation."
+        );
+      } else if (String(backendMessage).toLowerCase().includes("no firestore database exists yet")) {
+        setError(
+          "Google sign in failed: Firestore database is not created yet. Create Firestore Database in Firebase Console, then retry."
+        );
+      } else if (String(backendMessage).toLowerCase().includes("the page could not be found")) {
+        setError(
+          "Google sign in failed: backend route not found. Set VITE_API_URL to your backend base URL (with or without /api), redeploy, then verify /api/health works."
+        );
+      } else {
+        setError(`Google sign in failed: ${backendMessage}`);
+      }
+    } else if (firebaseCode === "auth/operation-not-allowed") {
+      setError("Google sign-in is disabled in Firebase Console. Enable Google provider in Authentication > Sign-in method.");
+    } else if (firebaseCode === "auth/configuration-not-found") {
+      setError(
+        "Google sign-in configuration is missing. In Firebase Console > Authentication > Sign-in method, enable Google provider and set a project support email, then retry."
+      );
+    } else if (firebaseCode === "auth/unauthorized-domain") {
+      const currentHost =
+        typeof window !== "undefined" && window.location?.hostname
+          ? window.location.hostname
+          : "your app domain";
+      setError(
+        `This domain is not authorized for Firebase Auth. Add ${currentHost} in Firebase Authentication > Settings > Authorized domains.`
+      );
+    } else if (firebaseCode === "auth/popup-blocked") {
+      setError("Google popup was blocked by the browser. Allow popups and try again.");
+    } else if (firebaseCode === "auth/popup-closed-by-user") {
+      setError("Google sign-in popup was closed before completing login.");
+    } else if (!authError?.response) {
+      try {
+        await axios.get(`${API_URL}/health`, {
+          timeout: 3000,
+          validateStatus: () => true,
+        });
+        setError(
+          `Google sign in failed: ${authError?.message || "Network or popup error during Google authentication."}`
+        );
+      } catch {
+        setError(
+          "Google sign in failed: backend API is unreachable. Set VITE_API_URL to your public backend URL (not localhost) and redeploy."
+        );
+      }
+    } else {
+      setError(`Google sign in failed: ${firebaseCode || errorToText(authError?.message) || "Unknown error"}`);
+    }
+  };
+
+  const completeGoogleBackendAuth = async (userCredential) => {
+    const firebaseIdToken = await userCredential.user.getIdToken();
+    const res = await axios.post(`${API_URL}/auth/google`, {
+      firebaseIdToken,
+    });
+
+    persistAuth(res.data?.token, res.data?.user);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const handleRedirectSignIn = async () => {
+      if (!isFirebaseConfigured || hasMissingHostedApiUrl || hasPlaceholderApiUrl) return;
+      const firebaseAuth = getFirebaseAuthClient();
+      if (!firebaseAuth) return;
+
+      try {
+        const redirectResult = await getRedirectResult(firebaseAuth);
+        if (!redirectResult?.user || cancelled) return;
+
+        setGoogleLoading(true);
+        await completeGoogleBackendAuth(redirectResult);
+        if (!cancelled) {
+          setError("");
+        }
+      } catch (authError) {
+        if (!cancelled) {
+          await handleGoogleAuthError(authError);
+        }
+      } finally {
+        if (!cancelled) {
+          setGoogleLoading(false);
+        }
+      }
+    };
+
+    handleRedirectSignIn();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadData = async (token = authToken) => {
     try {
@@ -382,73 +489,15 @@ export default function App() {
       }
 
       const provider = new GoogleAuthProvider();
-      const userCredential = await signInWithPopup(firebaseAuth, provider);
-      const firebaseIdToken = await userCredential.user.getIdToken();
-
-      const res = await axios.post(`${API_URL}/auth/google`, {
-        firebaseIdToken,
-      });
-
-      persistAuth(res.data?.token, res.data?.user);
-    } catch (authError) {
-      const firebaseCode = authError?.code || "";
-      const backendMessage = errorToText(
-        authError?.response?.data?.error ?? authError?.response?.data
-      );
-
-      if (backendMessage) {
-        if (String(backendMessage).toLowerCase().includes("cloud firestore api is disabled")) {
-          setError(
-            "Google sign in failed: Cloud Firestore API is disabled for your project. Enable Firestore API in Google Cloud Console, then retry after propagation."
-          );
-        } else if (String(backendMessage).toLowerCase().includes("no firestore database exists yet")) {
-          setError(
-            "Google sign in failed: Firestore database is not created yet. Create Firestore Database in Firebase Console, then retry."
-          );
-        } else if (String(backendMessage).toLowerCase().includes("the page could not be found")) {
-          setError(
-            "Google sign in failed: backend route not found. Set VITE_API_URL to your backend base URL (with or without /api), redeploy, then verify /api/health works."
-          );
-        } else {
-          setError(`Google sign in failed: ${backendMessage}`);
-        }
-      } else if (firebaseCode === "auth/operation-not-allowed") {
-        setError("Google sign-in is disabled in Firebase Console. Enable Google provider in Authentication > Sign-in method.");
-      } else if (firebaseCode === "auth/configuration-not-found") {
-        setError(
-          "Google sign-in configuration is missing. In Firebase Console > Authentication > Sign-in method, enable Google provider and set a project support email, then retry."
-        );
-      } else if (firebaseCode === "auth/unauthorized-domain") {
-        const currentHost =
-          typeof window !== "undefined" && window.location?.hostname
-            ? window.location.hostname
-            : "your app domain";
-        setError(
-          `This domain is not authorized for Firebase Auth. Add ${currentHost} in Firebase Authentication > Settings > Authorized domains.`
-        );
-      } else if (firebaseCode === "auth/popup-blocked") {
-        setError("Google popup was blocked by the browser. Allow popups and try again.");
-      } else if (firebaseCode === "auth/popup-closed-by-user") {
-        setError("Google sign-in popup was closed before completing login.");
-      } else if (!authError?.response) {
-        try {
-          await axios.get(`${API_URL}/health`, {
-            timeout: 3000,
-            validateStatus: () => true,
-          });
-          setError(
-            `Google sign in failed: ${authError?.message || "Network or popup error during Google authentication."}`
-          );
-        } catch {
-          setError(
-            "Google sign in failed: backend API is unreachable. Set VITE_API_URL to your public backend URL (not localhost) and redeploy."
-          );
-        }
-      } else {
-        setError(
-          `Google sign in failed: ${firebaseCode || errorToText(authError?.message) || "Unknown error"}`
-        );
+      if (isMobileDevice) {
+        await signInWithRedirect(firebaseAuth, provider);
+        return;
       }
+
+      const userCredential = await signInWithPopup(firebaseAuth, provider);
+      await completeGoogleBackendAuth(userCredential);
+    } catch (authError) {
+      await handleGoogleAuthError(authError);
     } finally {
       setGoogleLoading(false);
     }
