@@ -12,6 +12,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret-in-production";
+let firebaseSetupError = "";
 
 // Middleware
 app.use(express.json());
@@ -37,13 +38,27 @@ try {
 
   console.log("✓ Firebase connected");
 } catch (err) {
+  firebaseSetupError = `Firebase initialization failed: ${err?.message || "Unknown error"}`;
   console.error("✗ Firebase connection failed:", err.message);
   console.log(
     "Set FIREBASE_SERVICE_ACCOUNT_JSON (recommended for hosting) or ensure firebaseKey.json exists in project root"
   );
 }
 
-const db = admin.firestore();
+const db = admin.apps.length ? admin.firestore() : null;
+
+const getFirebaseSetupErrorMessage = () => {
+  return (
+    firebaseSetupError ||
+    "Firebase is not configured on the server. Set FIREBASE_SERVICE_ACCOUNT_JSON and redeploy."
+  );
+};
+
+const ensureFirebaseReady = (res) => {
+  if (db) return true;
+  res.status(503).json({ error: getFirebaseSetupErrorMessage() });
+  return false;
+};
 
 const isFirestoreUnavailableError = (error) => {
   const message = String(error?.message || "");
@@ -109,6 +124,10 @@ const ensureUserDefaults = async (uid, profile = {}) => {
 };
 
 const authMiddleware = async (req, res, next) => {
+  if (!ensureFirebaseReady(res)) {
+    return;
+  }
+
   try {
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
@@ -171,6 +190,10 @@ const authMiddleware = async (req, res, next) => {
 };
 
 app.post("/api/auth/signup", async (req, res) => {
+  if (!ensureFirebaseReady(res)) {
+    return;
+  }
+
   try {
     const { username, name, email, password } = req.body || {};
     const normalizedEmail = String(email || "").trim().toLowerCase();
@@ -248,6 +271,10 @@ app.post("/api/auth/signup", async (req, res) => {
 });
 
 app.post("/api/auth/login", async (req, res) => {
+  if (!ensureFirebaseReady(res)) {
+    return;
+  }
+
   try {
     const { identifier, email, password } = req.body || {};
     const normalizedIdentifier = String(identifier || email || "").trim().toLowerCase();
@@ -299,6 +326,10 @@ app.post("/api/auth/login", async (req, res) => {
 });
 
 app.post("/api/auth/google", async (req, res) => {
+  if (!ensureFirebaseReady(res)) {
+    return;
+  }
+
   try {
     const { firebaseIdToken } = req.body || {};
 
