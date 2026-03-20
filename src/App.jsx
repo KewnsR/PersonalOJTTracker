@@ -47,6 +47,27 @@ const fromDateString = (dateStr) => {
   return new Date(year, month - 1, day);
 };
 
+const isValidDateValue = (value) => value instanceof Date && !Number.isNaN(value.getTime());
+
+const getDateKeysInRange = (fromStr, toStr) => {
+  const from = fromDateString(fromStr);
+  const to = fromDateString(toStr);
+
+  if (!isValidDateValue(from) || !isValidDateValue(to)) return [];
+
+  const start = from <= to ? from : to;
+  const end = from <= to ? to : from;
+  const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const keys = [];
+
+  while (cursor <= end && keys.length <= 731) {
+    keys.push(toLocalDateString(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return keys;
+};
+
 const getStartOfWeek = (date) => {
   const value = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const day = value.getDay();
@@ -940,10 +961,11 @@ export default function App() {
     });
   }, [normalizedEntries]);
 
+  const selectedDateStr = useMemo(() => toLocalDateString(selectedDate), [selectedDate]);
+
   const selectedDateEntries = useMemo(() => {
-    const selectedDateStr = toLocalDateString(selectedDate);
     return sortedEntries.filter((entry) => entry.date === selectedDateStr);
-  }, [sortedEntries, selectedDate]);
+  }, [sortedEntries, selectedDateStr]);
 
   const currentWeekKey = useMemo(
     () => `${journalFromDate}__${journalToDate}`,
@@ -976,6 +998,310 @@ export default function App() {
       .filter((item) => item.note.length > 0)
       .sort((a, b) => b.from.localeCompare(a.from));
   }, [weeklyJournalNotes]);
+
+  const reportsByDate = useMemo(() => {
+    return weeklyJournalHistory.reduce((acc, report) => {
+      const dateKeys = getDateKeysInRange(report.from, report.to);
+      dateKeys.forEach((dateKey) => {
+        if (!acc[dateKey]) {
+          acc[dateKey] = [];
+        }
+        acc[dateKey].push(report);
+      });
+      return acc;
+    }, {});
+  }, [weeklyJournalHistory]);
+
+  const selectedDateReports = useMemo(
+    () => reportsByDate[selectedDateStr] || [],
+    [reportsByDate, selectedDateStr]
+  );
+
+  const calendarTileIndicators = useMemo(() => {
+    const indicatorMap = {};
+
+    normalizedEntries.forEach((entry) => {
+      if (!entry?.date) return;
+      if (!indicatorMap[entry.date]) {
+        indicatorMap[entry.date] = { hasEntries: false, hasReports: false };
+      }
+      indicatorMap[entry.date].hasEntries = true;
+    });
+
+    Object.keys(reportsByDate).forEach((dateKey) => {
+      if (!indicatorMap[dateKey]) {
+        indicatorMap[dateKey] = { hasEntries: false, hasReports: false };
+      }
+      indicatorMap[dateKey].hasReports = true;
+    });
+
+    return indicatorMap;
+  }, [normalizedEntries, reportsByDate]);
+
+  const exportAllReportsToExcel = async () => {
+    try {
+      const { default: ExcelJS } = await import("exceljs");
+      const workbook = new ExcelJS.Workbook();
+      const today = toLocalDateString(new Date());
+
+      const formatExcelTime = (time24) => {
+        const [hRaw = "0", mRaw = "0"] = (time24 || "00:00").split(":");
+        const hour = Number(hRaw);
+        const minute = String(Number(mRaw)).padStart(2, "0");
+        if (!Number.isFinite(hour)) return "";
+        const twelveHour = hour % 12 === 0 ? 12 : hour % 12;
+        return `${twelveHour}:${minute}`;
+      };
+
+      const formatHourForDtr = (hours) => {
+        const value = Number(hours);
+        if (!Number.isFinite(value) || value === 0) return "";
+        return String(Number(value.toFixed(2)));
+      };
+
+      const getHourPart = (time24) => {
+        const [hRaw = "0"] = (time24 || "00:00").split(":");
+        const hour = Number(hRaw);
+        return Number.isFinite(hour) ? hour : 0;
+      };
+
+      const monthlyData = normalizedEntries.reduce((acc, entry) => {
+        if (!entry?.date) return acc;
+        const monthKey = String(entry.date).slice(0, 7);
+        const dayNumber = Number(String(entry.date).slice(8, 10));
+        if (!monthKey || !dayNumber) return acc;
+
+        if (!acc[monthKey]) {
+          acc[monthKey] = {};
+        }
+
+        const existing = acc[monthKey][dayNumber] || {
+          timeIn: "",
+          timeOut: "",
+          hours: 0,
+        };
+
+        const nextTimeIn = !existing.timeIn || (entry.timeIn || "") < existing.timeIn
+          ? (entry.timeIn || existing.timeIn)
+          : existing.timeIn;
+        const nextTimeOut = !existing.timeOut || (entry.timeOut || "") > existing.timeOut
+          ? (entry.timeOut || existing.timeOut)
+          : existing.timeOut;
+
+        acc[monthKey][dayNumber] = {
+          timeIn: nextTimeIn,
+          timeOut: nextTimeOut,
+          hours: Number((Number(existing.hours || 0) + Number(entry.hours || 0)).toFixed(2)),
+        };
+
+        return acc;
+      }, {});
+
+      const monthKeys = Object.keys(monthlyData).sort((a, b) => a.localeCompare(b));
+      if (monthKeys.length === 0) {
+        monthKeys.push(toLocalDateString(new Date()).slice(0, 7));
+      }
+
+      monthKeys.forEach((monthKey) => {
+        const monthDate = fromDateString(`${monthKey}-01`);
+        const monthLabel = monthDate.toLocaleDateString("en-US", {
+          month: "long",
+          year: "numeric",
+        });
+        const perDay = monthlyData[monthKey] || {};
+
+        const worksheet = workbook.addWorksheet(`DTR ${monthKey}`.slice(0, 31), {
+          views: [{ showGridLines: true }],
+        });
+
+        worksheet.columns = [
+          { width: 7 },
+          { width: 12 },
+          { width: 12 },
+          { width: 12 },
+          { width: 12 },
+          { width: 10 },
+          { width: 18 },
+        ];
+
+        worksheet.mergeCells("A1:G1");
+        worksheet.getCell("A1").value = "DAILY TIME RECORD FOR STUDENT INTERNSHIP";
+        worksheet.getCell("A1").alignment = { horizontal: "center", vertical: "middle" };
+        worksheet.getCell("A1").font = { bold: true, size: 12 };
+
+        worksheet.getCell("A2").value = "Student Name:";
+        worksheet.mergeCells("B2:G2");
+        worksheet.getCell("B2").value = profile.name || authUser?.name || "";
+
+        worksheet.getCell("A3").value = "For the month of";
+        worksheet.mergeCells("B3:G3");
+        worksheet.getCell("B3").value = monthLabel;
+
+        worksheet.mergeCells("A4:G4");
+        worksheet.getCell("A4").value = "Official hours for time in and time out";
+
+        worksheet.mergeCells("A5:G5");
+        worksheet.getCell("A5").value = "Regular days";
+
+        worksheet.mergeCells("A6:A7");
+        worksheet.getCell("A6").value = "Day";
+
+        worksheet.mergeCells("B6:C6");
+        worksheet.getCell("B6").value = "A.M.";
+        worksheet.mergeCells("D6:E6");
+        worksheet.getCell("D6").value = "P.M.";
+
+        worksheet.mergeCells("F6:F7");
+        worksheet.getCell("F6").value = "Hours";
+        worksheet.mergeCells("G6:G7");
+        worksheet.getCell("G6").value = "Signature";
+
+        worksheet.getCell("B7").value = "Time In";
+        worksheet.getCell("C7").value = "Time Out";
+        worksheet.getCell("D7").value = "Time In";
+        worksheet.getCell("E7").value = "Time Out";
+
+        let monthTotalHours = 0;
+
+        for (let day = 1; day <= 31; day += 1) {
+          const record = perDay[day];
+          const inHour = record?.timeIn ? getHourPart(record.timeIn) : null;
+          const outHour = record?.timeOut ? getHourPart(record.timeOut) : null;
+
+          const amIn = record?.timeIn && inHour < 12 ? formatExcelTime(record.timeIn) : "";
+          const amOut = record?.timeOut && outHour < 12 ? formatExcelTime(record.timeOut) : "";
+          const pmIn = record?.timeIn && inHour >= 12 ? formatExcelTime(record.timeIn) : "";
+          const pmOut = record?.timeOut && outHour >= 12 ? formatExcelTime(record.timeOut) : "";
+          const dayHours = Number(record?.hours || 0);
+
+          monthTotalHours += dayHours;
+
+          const rowIndex = 7 + day;
+          worksheet.getCell(`A${rowIndex}`).value = day;
+          worksheet.getCell(`B${rowIndex}`).value = amIn;
+          worksheet.getCell(`C${rowIndex}`).value = amOut;
+          worksheet.getCell(`D${rowIndex}`).value = pmIn;
+          worksheet.getCell(`E${rowIndex}`).value = pmOut;
+          worksheet.getCell(`F${rowIndex}`).value = formatHourForDtr(dayHours);
+          worksheet.getCell(`G${rowIndex}`).value = "";
+        }
+
+        worksheet.mergeCells("D39:E39");
+        worksheet.getCell("D39").value = "Total";
+        worksheet.getCell("F39").value = formatHourForDtr(monthTotalHours) || "0";
+
+        worksheet.mergeCells("A41:G41");
+        worksheet.getCell("A41").value =
+          "I certify on my honor that the above is a true and correct report of the hours of work performed, record of which was made daily at the time of arrival and departure from office.";
+        worksheet.getCell("A41").alignment = {
+          horizontal: "left",
+          vertical: "middle",
+          wrapText: true,
+        };
+        worksheet.getRow(41).height = 34;
+
+        worksheet.mergeCells("A43:G43");
+        worksheet.getCell("A43").value = "VERIFIED as to the prescribed office hours:";
+
+        worksheet.mergeCells("A45:G45");
+        worksheet.getCell("A45").value = "TRAINING OFFICER / IMMEDIATE SUPERVISOR";
+
+        const thinBorder = {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" },
+        };
+
+        for (let row = 6; row <= 39; row += 1) {
+          for (let col = 1; col <= 7; col += 1) {
+            const cell = worksheet.getCell(row, col);
+            cell.border = thinBorder;
+            cell.alignment = {
+              horizontal: "center",
+              vertical: "middle",
+              wrapText: true,
+            };
+          }
+        }
+
+        ["A2", "B2", "A3", "B3", "A4", "A5", "A43"].forEach((address) => {
+          worksheet.getCell(address).alignment = { horizontal: "left", vertical: "middle" };
+        });
+
+        worksheet.getCell("A45").alignment = { horizontal: "center", vertical: "middle" };
+        worksheet.getCell("D39").font = { bold: true };
+        worksheet.getCell("F39").font = { bold: true };
+
+        worksheet.pageSetup = {
+          orientation: "portrait",
+          fitToPage: true,
+          fitToWidth: 1,
+          fitToHeight: 0,
+          margins: {
+            left: 0.3,
+            right: 0.3,
+            top: 0.35,
+            bottom: 0.35,
+            header: 0.2,
+            footer: 0.2,
+          },
+        };
+      });
+
+      const weeklyReportRows = weeklyJournalHistory.map((item) => ({
+        "Date From": item.from,
+        "Date To": item.to,
+        "Weekly Report": item.note,
+      }));
+
+      const weeklySheet = workbook.addWorksheet("Weekly Reports");
+      weeklySheet.columns = [
+        { header: "Date From", key: "from", width: 14 },
+        { header: "Date To", key: "to", width: 14 },
+        { header: "Weekly Report", key: "note", width: 80 },
+      ];
+      if (weeklyReportRows.length) {
+        weeklyReportRows.forEach((item) => {
+          weeklySheet.addRow({
+            from: item["Date From"],
+            to: item["Date To"],
+            note: item["Weekly Report"],
+          });
+        });
+      } else {
+        weeklySheet.addRow({ from: "", to: "", note: "" });
+      }
+      weeklySheet.getRow(1).font = { bold: true };
+      weeklySheet.getColumn(3).alignment = { wrapText: true, vertical: "top" };
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `ojt-reports-${today}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      setError("");
+    } catch {
+      setError("Unable to export reports to Excel right now. Please try again.");
+    }
+  };
+
+  const openWeeklyReportFromCalendar = (item) => {
+    setJournalFromDate(item.from);
+    setJournalToDate(item.to);
+    setJournalInput(item.note || "");
+    setEditingJournalKey(null);
+    setJournalEditForm({ from: "", to: "", note: "" });
+    setActiveTab("journal");
+  };
 
   useEffect(() => {
     setJournalInput(weeklyJournalNotes[currentWeekKey] || "");
@@ -1618,7 +1944,31 @@ export default function App() {
                 <Calendar
                   value={selectedDate}
                   onChange={handleDateSelect}
+                  onClickDay={handleDateSelect}
                   maxDate={new Date()}
+                  tileClassName={({ date, view }) => {
+                    if (view !== "month") return "";
+                    const dateKey = toLocalDateString(date);
+                    const status = calendarTileIndicators[dateKey];
+                    if (!status) return "";
+                    if (status.hasEntries && status.hasReports) return "calendar-day-has-both";
+                    if (status.hasEntries) return "calendar-day-has-entries";
+                    if (status.hasReports) return "calendar-day-has-reports";
+                    return "";
+                  }}
+                  tileContent={({ date, view }) => {
+                    if (view !== "month") return null;
+                    const dateKey = toLocalDateString(date);
+                    const status = calendarTileIndicators[dateKey];
+                    if (!status?.hasEntries && !status?.hasReports) return null;
+
+                    return (
+                      <div className="calendar-day-indicators" aria-hidden="true">
+                        {status.hasEntries ? <span className="calendar-day-indicator calendar-day-indicator--entry" /> : null}
+                        {status.hasReports ? <span className="calendar-day-indicator calendar-day-indicator--report" /> : null}
+                      </div>
+                    );
+                  }}
                 />
               </div>
               <button
@@ -1667,6 +2017,35 @@ export default function App() {
                     </div>
                   ))
                 )}
+              </div>
+
+              <div className={`mt-6 border-t pt-4 ${themeMode === "light" ? "border-slate-200" : "border-slate-700"}`}>
+                <h4 className={`text-lg font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>
+                  Weekly Reports Covering {selectedDateStr}
+                </h4>
+                <div className="mt-3 space-y-3">
+                  {selectedDateReports.length === 0 ? (
+                    <p className={themeMode === "light" ? "text-slate-500" : "text-slate-400"}>
+                      No weekly reports include this date.
+                    </p>
+                  ) : (
+                    selectedDateReports.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => openWeeklyReportFromCalendar(item)}
+                        className={`w-full rounded-lg p-3 text-left transition ${themeMode === "light" ? "border border-slate-200 bg-slate-50 hover:bg-slate-100" : "border border-slate-700 bg-slate-800 hover:bg-slate-700"}`}
+                      >
+                        <p className={`text-sm font-semibold ${themeMode === "light" ? "text-slate-800" : "text-slate-100"}`}>
+                          {item.from} to {item.to}
+                        </p>
+                        <p className={`mt-1 text-sm ${themeMode === "light" ? "text-slate-600" : "text-slate-300"}`}>
+                          {item.note}
+                        </p>
+                      </button>
+                    ))
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -1801,9 +2180,18 @@ export default function App() {
               <h3 className={`text-xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>
                 Saved Weekly Reports
               </h3>
-              <span className={`text-sm ${themeMode === "light" ? "text-slate-600" : "text-slate-400"}`}>
-                {weeklyJournalHistory.length} saved
-              </span>
+              <div className="flex items-center gap-2">
+                <span className={`text-sm ${themeMode === "light" ? "text-slate-600" : "text-slate-400"}`}>
+                  {weeklyJournalHistory.length} saved
+                </span>
+                <button
+                  type="button"
+                  onClick={exportAllReportsToExcel}
+                  className="rounded-md bg-cyan-500 px-3 py-1 text-sm font-semibold text-slate-950 hover:bg-cyan-400"
+                >
+                  Download Excel
+                </button>
+              </div>
             </div>
 
             {weeklyJournalHistory.length === 0 ? (
@@ -2551,7 +2939,7 @@ export default function App() {
       >
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <p>Personal OJT Tracker</p>
-          <p>Version 1.0</p>
+          <p>Version 1.1</p>
         </div>
       </footer>
 
