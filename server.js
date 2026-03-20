@@ -143,10 +143,16 @@ const authMiddleware = async (req, res, next) => {
       if (!decoded?.uid) {
         return res.status(401).json({ error: "Invalid authentication token" });
       }
-      userDoc = await db.collection("users").doc(decoded.uid).get();
-      if (!userDoc.exists) {
-        return res.status(401).json({ error: "User not found" });
-      }
+
+      req.user = {
+        uid: decoded.uid,
+        email: decoded.email || "",
+        name: decoded.name || "OJT Trainee",
+        username: decoded.username || "",
+      };
+
+      next();
+      return;
     } catch {
       const firebaseDecoded = await admin.auth().verifyIdToken(token);
       const firebaseUid = firebaseDecoded.uid;
@@ -301,13 +307,6 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid username/email or password" });
     }
 
-    await doc.ref.set(
-      {
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-
     const user = {
       id: doc.id,
       name: userData.name || "OJT Trainee",
@@ -346,6 +345,8 @@ app.post("/api/auth/google", async (req, res) => {
     const userRef = db.collection("users").doc(uid);
     const userDoc = await userRef.get();
 
+    let user = null;
+
     if (!userDoc.exists) {
       await userRef.set({
         name,
@@ -356,26 +357,22 @@ app.post("/api/auth/google", async (req, res) => {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       await ensureUserDefaults(uid, { name, email });
-    } else {
-      await userRef.set(
-        {
-          name,
-          email,
-          authProvider: "google",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-    }
 
-    const latestUserDoc = await userRef.get();
-    const data = latestUserDoc.data() || {};
-    const user = {
-      id: uid,
-      name: data.name || name,
-      email: data.email || email,
-      username: data.username || fallbackUsername,
-    };
+      user = {
+        id: uid,
+        name,
+        email,
+        username: fallbackUsername,
+      };
+    } else {
+      const existingData = userDoc.data() || {};
+      user = {
+        id: uid,
+        name: existingData.name || name,
+        email: existingData.email || email,
+        username: existingData.username || fallbackUsername,
+      };
+    }
 
     const token = buildAuthToken(user);
     return res.json({ token, user });

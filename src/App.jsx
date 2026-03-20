@@ -193,6 +193,14 @@ export default function App() {
   }, [authToken]);
 
   useEffect(() => {
+    if (!API_URL || hasPlaceholderApiUrl || hasMissingHostedApiUrl || hasHostedLocalApiUrl) {
+      return;
+    }
+
+    axios.get(`${API_URL}/health`, { timeout: 7000 }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (!authUser) return;
     setProfile((prev) => ({
       ...prev,
@@ -271,9 +279,15 @@ export default function App() {
 
   const completeGoogleBackendAuth = async (userCredential) => {
     const firebaseIdToken = await userCredential.user.getIdToken();
-    const res = await axios.post(`${API_URL}/auth/google`, {
-      firebaseIdToken,
-    });
+    const res = await axios.post(
+      `${API_URL}/auth/google`,
+      {
+        firebaseIdToken,
+      },
+      {
+        timeout: 15000,
+      }
+    );
 
     persistAuth(res.data?.token, res.data?.user);
   };
@@ -434,12 +448,18 @@ export default function App() {
           return;
         }
 
-        const res = await axios.post(`${API_URL}/auth/signup`, {
-          username: authForm.username,
-          name: authForm.name,
-          email: authForm.email,
-          password: authForm.password,
-        });
+        const res = await axios.post(
+          `${API_URL}/auth/signup`,
+          {
+            username: authForm.username,
+            name: authForm.name,
+            email: authForm.email,
+            password: authForm.password,
+          },
+          {
+            timeout: 15000,
+          }
+        );
 
         persistAuth(res.data?.token, res.data?.user);
       } else {
@@ -448,11 +468,17 @@ export default function App() {
           return;
         }
 
-        const res = await axios.post(`${API_URL}/auth/login`, {
-          identifier: authForm.identifier,
-          email: authForm.identifier,
-          password: authForm.password,
-        });
+        const res = await axios.post(
+          `${API_URL}/auth/login`,
+          {
+            identifier: authForm.identifier,
+            email: authForm.identifier,
+            password: authForm.password,
+          },
+          {
+            timeout: 15000,
+          }
+        );
 
         persistAuth(res.data?.token, res.data?.user);
       }
