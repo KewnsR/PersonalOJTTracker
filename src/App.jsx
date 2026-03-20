@@ -77,6 +77,18 @@ const errorToText = (value) => {
   return String(value);
 };
 
+const getGoogleAuthErrorText = (authError) => {
+  if (!authError) return "";
+  const responseData = authError?.response?.data;
+  return (
+    errorToText(responseData?.error) ||
+    errorToText(responseData) ||
+    errorToText(authError?.message) ||
+    errorToText(authError?.code) ||
+    ""
+  );
+};
+
 const hasPlaceholderApiUrl = /your-backend\.onrender\.com|example\.com|<backend-url>/i.test(
   API_URL
 );
@@ -193,8 +205,8 @@ export default function App() {
   }, [authUser]);
 
   const handleGoogleAuthError = async (authError) => {
-    const firebaseCode = authError?.code || "";
-    const backendMessage = errorToText(authError?.response?.data?.error ?? authError?.response?.data);
+    const firebaseCode = typeof authError?.code === "string" ? authError.code : "";
+    const backendMessage = getGoogleAuthErrorText(authError);
 
     if (backendMessage) {
       if (String(backendMessage).toLowerCase().includes("cloud firestore api is disabled")) {
@@ -237,7 +249,7 @@ export default function App() {
           validateStatus: () => true,
         });
         setError(
-          `Google sign in failed: ${authError?.message || "Network or popup error during Google authentication."}`
+          `Google sign in failed: ${getGoogleAuthErrorText(authError) || "Network or popup error during Google authentication."}`
         );
       } catch {
         setError(
@@ -245,7 +257,13 @@ export default function App() {
         );
       }
     } else {
-      setError(`Google sign in failed: ${firebaseCode || errorToText(authError?.message) || "Unknown error"}`);
+      setError(
+        `Google sign in failed: ${
+          firebaseCode ||
+          getGoogleAuthErrorText(authError) ||
+          "Unknown error"
+        }`
+      );
     }
   };
 
@@ -489,9 +507,16 @@ export default function App() {
       }
 
       const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
       if (isMobileDevice) {
-        await signInWithRedirect(firebaseAuth, provider);
-        return;
+        try {
+          await signInWithRedirect(firebaseAuth, provider);
+          return;
+        } catch (redirectError) {
+          const userCredential = await signInWithPopup(firebaseAuth, provider);
+          await completeGoogleBackendAuth(userCredential);
+          return;
+        }
       }
 
       const userCredential = await signInWithPopup(firebaseAuth, provider);
