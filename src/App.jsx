@@ -93,6 +93,8 @@ const hasPlaceholderApiUrl = /your-backend\.onrender\.com|example\.com|<backend-
   API_URL
 );
 const hasMissingHostedApiUrl = !configuredApiUrl && !isLocalFrontend;
+const hasHostedLocalApiUrl =
+  !isLocalFrontend && /https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(configuredApiUrl);
 const isMobileDevice =
   typeof navigator !== "undefined" && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 
@@ -419,6 +421,13 @@ export default function App() {
         return;
       }
 
+      if (hasHostedLocalApiUrl) {
+        setError(
+          `This deployed app is pointing to localhost (${configuredApiUrl}). Set VITE_API_URL to your public backend URL and redeploy.`
+        );
+        return;
+      }
+
       if (authMode === "signup") {
         if (!authForm.username || !authForm.name || !authForm.email || !authForm.password) {
           setError("Please fill in username, full name, email, and password.");
@@ -449,7 +458,11 @@ export default function App() {
       }
     } catch (authError) {
       if (!authError?.response) {
-        setError("Cannot connect to server. Start backend on http://localhost:5000 and try again.");
+        setError(
+          isLocalFrontend
+            ? "Cannot connect to server. Start backend on http://localhost:5000 and try again."
+            : "Cannot connect to backend API. Set VITE_API_URL to your public backend URL (not localhost) and redeploy."
+        );
         return;
       }
 
@@ -480,6 +493,13 @@ export default function App() {
       if (hasMissingHostedApiUrl) {
         setError(
           "Google sign in backend URL is missing. Set VITE_API_URL to your public backend URL and redeploy."
+        );
+        return;
+      }
+
+      if (hasHostedLocalApiUrl) {
+        setError(
+          `Google sign in backend URL is localhost (${configuredApiUrl}). Set VITE_API_URL to your public backend URL and redeploy.`
         );
         return;
       }
