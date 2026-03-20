@@ -1213,7 +1213,7 @@ export default function App() {
   return (
     <div
       data-theme={themeMode}
-      className={`min-h-screen p-4 md:p-8 ${
+      className={`min-h-screen flex flex-col p-4 md:p-8 ${
         themeMode === "light"
           ? "bg-gradient-to-br from-slate-100 via-white to-slate-100"
           : "bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950"
@@ -1222,9 +1222,9 @@ export default function App() {
       <motion.div
         initial={{ opacity: 0, y: 30 }}
         animate={{ opacity: 1, y: 0 }}
-        className="mx-auto max-w-7xl"
+        className="mx-auto w-full max-w-7xl flex-1"
       >
-        <div className="mb-8 flex items-center justify-between gap-4">
+        <header className="mb-8 flex items-center justify-between gap-4">
           <div>
             <h1 className="text-4xl md:text-5xl font-black text-blue-600">
               OJT Dashboard
@@ -1316,7 +1316,9 @@ export default function App() {
               </div>
             )}
           </div>
-        </div>
+        </header>
+
+        <main className="pb-6">
 
         {error ? (
           <div className="mb-6 rounded-lg border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-rose-200">
@@ -1948,17 +1950,6 @@ export default function App() {
               </div>
             </motion.div>
 
-            <footer className="pointer-events-none fixed inset-x-0 bottom-3 z-40 flex justify-center">
-              <p
-                className={
-                  themeMode === "light"
-                    ? "rounded-full border border-slate-300 bg-white/90 px-3 py-1 text-xs text-slate-600 shadow"
-                    : "rounded-full border border-slate-700 bg-slate-900/90 px-3 py-1 text-xs text-slate-300 shadow"
-                }
-              >
-                Version 1.0
-              </p>
-            </footer>
           </div>
         )}
 
@@ -2522,7 +2513,21 @@ export default function App() {
             </motion.div>
           </div>
         )}
+        </main>
       </motion.div>
+
+      <footer
+        className={`mx-auto mt-4 w-full max-w-7xl rounded-xl px-4 py-3 ${
+          themeMode === "light"
+            ? "border border-slate-200 bg-white/90 text-slate-600"
+            : "border border-slate-800 bg-slate-900/80 text-slate-300"
+        }`}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <p>Personal OJT Tracker</p>
+          <p>Version 1.0</p>
+        </div>
+      </footer>
 
     </div>
   );
