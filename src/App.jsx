@@ -98,6 +98,16 @@ const errorToText = (value) => {
   return String(value);
 };
 
+const isNetworkLikeError = (value) => {
+  const text = String(value || "").toLowerCase();
+  return (
+    text.includes("network error") ||
+    text.includes("timeout") ||
+    text.includes("failed to fetch") ||
+    text.includes("network-request-failed")
+  );
+};
+
 const getGoogleAuthErrorText = (authError) => {
   if (!authError) return "";
   const responseData = authError?.response?.data;
@@ -125,17 +135,7 @@ export default function App() {
     const stored = localStorage.getItem(AUTH_USER_STORAGE_KEY);
     return stored ? JSON.parse(stored) : null;
   });
-  const [authMode, setAuthMode] = useState("login");
-  const [authForm, setAuthForm] = useState({
-    username: "",
-    name: "",
-    identifier: "",
-    email: "",
-    password: "",
-  });
-  const [authLoading, setAuthLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [showLoginSplash, setShowLoginSplash] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [entries, setEntries] = useState([]);
@@ -252,6 +252,10 @@ export default function App() {
         setError(
           "Google sign in failed: backend route not found. Set VITE_API_URL to your backend base URL (with or without /api), redeploy, then verify /api/health works."
         );
+      } else if (isNetworkLikeError(backendMessage)) {
+        setError(
+          "Google sign in failed: backend is temporarily unreachable (often a cold start). Wait a few seconds and try again."
+        );
       } else {
         setError(`Google sign in failed: ${backendMessage}`);
       }
@@ -276,12 +280,18 @@ export default function App() {
     } else if (!authError?.response) {
       try {
         await axios.get(`${API_URL}/health`, {
-          timeout: 3000,
+          timeout: 12000,
           validateStatus: () => true,
         });
-        setError(
-          `Google sign in failed: ${getGoogleAuthErrorText(authError) || "Network or popup error during Google authentication."}`
-        );
+        const fallbackText =
+          getGoogleAuthErrorText(authError) || "Network or popup error during Google authentication.";
+        if (isNetworkLikeError(fallbackText)) {
+          setError(
+            "Google sign in failed: backend is waking up (cold start). Please try again in 10-30 seconds."
+          );
+        } else {
+          setError(`Google sign in failed: ${fallbackText}`);
+        }
       } catch {
         setError(
           "Google sign in failed: backend API is unreachable. Set VITE_API_URL to your public backend URL (not localhost) and redeploy."
@@ -298,17 +308,70 @@ export default function App() {
     }
   };
 
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const waitForBackendReady = async () => {
+    const maxChecks = 4;
+    for (let attempt = 0; attempt < maxChecks; attempt += 1) {
+      try {
+        const response = await axios.get(`${API_URL}/health`, {
+          timeout: 25000,
+          validateStatus: () => true,
+        });
+
+        if (response.status >= 200 && response.status < 500) {
+          return true;
+        }
+      } catch {
+        // retry until attempts are exhausted
+      }
+
+      if (attempt < maxChecks - 1) {
+        await sleep(4000);
+      }
+    }
+
+    return false;
+  };
+
   const completeGoogleBackendAuth = async (userCredential) => {
     const firebaseIdToken = await userCredential.user.getIdToken();
-    const res = await axios.post(
-      `${API_URL}/auth/google`,
-      {
-        firebaseIdToken,
-      },
-      {
-        timeout: 15000,
+    const submitGoogleToken = () =>
+      axios.post(
+        `${API_URL}/auth/google`,
+        {
+          firebaseIdToken,
+        },
+        {
+          timeout: 45000,
+        }
+      );
+
+    let res;
+
+    try {
+      res = await submitGoogleToken();
+    } catch (firstError) {
+      if (!isNetworkLikeError(firstError?.message)) {
+        throw firstError;
       }
-    );
+
+      const backendReady = await waitForBackendReady();
+      if (!backendReady) {
+        throw firstError;
+      }
+
+      try {
+        res = await submitGoogleToken();
+      } catch (secondError) {
+        if (!isNetworkLikeError(secondError?.message)) {
+          throw secondError;
+        }
+
+        await sleep(3000);
+        res = await submitGoogleToken();
+      }
+    }
 
     persistAuth(res.data?.token, res.data?.user);
   };
@@ -445,91 +508,7 @@ export default function App() {
 
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
-    setError("");
-    setAuthLoading(true);
-
-    try {
-      if (hasMissingHostedApiUrl) {
-        setError(
-          "Backend URL is not configured for this deployed app. Set VITE_API_URL to your public backend URL and redeploy."
-        );
-        return;
-      }
-
-      if (hasHostedLocalApiUrl) {
-        setError(
-          `This deployed app is pointing to localhost (${configuredApiUrl}). Set VITE_API_URL to your public backend URL and redeploy.`
-        );
-        return;
-      }
-
-      if (authMode === "signup") {
-        if (!authForm.username || !authForm.name || !authForm.email || !authForm.password) {
-          setError("Please fill in username, full name, email, and password.");
-          return;
-        }
-
-        const res = await axios.post(
-          `${API_URL}/auth/signup`,
-          {
-            username: authForm.username,
-            name: authForm.name,
-            email: authForm.email,
-            password: authForm.password,
-          },
-          {
-            timeout: 15000,
-          }
-        );
-
-        persistAuth(res.data?.token, res.data?.user);
-      } else {
-        if (!authForm.identifier || !authForm.password) {
-          setError("Please enter your username/email and password.");
-          return;
-        }
-
-        const res = await axios.post(
-          `${API_URL}/auth/login`,
-          {
-            identifier: authForm.identifier,
-            email: authForm.identifier,
-            password: authForm.password,
-          },
-          {
-            timeout: 15000,
-          }
-        );
-
-        persistAuth(res.data?.token, res.data?.user);
-      }
-    } catch (authError) {
-      if (!authError?.response) {
-        setError(
-          isLocalFrontend
-            ? "Cannot connect to server. Start backend on http://localhost:5000 and try again."
-            : "Cannot connect to backend API. Set VITE_API_URL to your public backend URL (not localhost) and redeploy."
-        );
-        return;
-      }
-
-      const message =
-        authError?.response?.data?.error ||
-        (authMode === "signup" ? "Sign up failed." : "Login failed.");
-      if (String(message).toLowerCase().includes("no firestore database exists yet")) {
-        setError(
-          "Firestore database is not created yet. In Firebase Console, open Firestore Database and create the default database, then retry login/signup."
-        );
-      } else if (String(message).toLowerCase().includes("cloud firestore api is disabled")) {
-        setError(
-          "Cloud Firestore API is disabled for your Firebase project. Enable Firestore API in Google Cloud Console and wait a few minutes before retrying login/signup."
-        );
-      } else {
-        setError(message);
-      }
-    } finally {
-      setAuthLoading(false);
-    }
+    // Traditional auth removed - only Google sign-in is used
   };
 
   const handleGoogleSignIn = async () => {
@@ -1399,147 +1378,173 @@ export default function App() {
 
   if (!authToken) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-[#000b2f] via-[#001341] to-[#000a2b] p-4 md:p-8">
-        <div className="mx-auto flex min-h-[85vh] max-w-md items-center">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-slate-50 to-blue-100 flex flex-col">
+        {/* Navigation Bar */}
+        <div className="border-b border-blue-100 bg-white/80 backdrop-blur-sm sticky top-0 z-50">
+          <div className="max-w-7xl mx-auto px-4 md:px-8 py-4 flex items-center justify-between">
+            <div className="text-2xl font-black text-blue-600">OJT Tracker</div>
+            <div className="text-sm text-slate-500">Professional Training Hours Tracking</div>
+          </div>
+        </div>
+
+        {/* Main Content */}
+        <div className="flex-1 max-w-7xl mx-auto px-4 md:px-8 py-12 md:py-16 w-full">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="w-full rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+            transition={{ duration: 0.6 }}
+            className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center"
           >
-            <h1 className="text-3xl font-black text-blue-600">Welcome</h1>
-            <p className="mt-2 text-sm text-slate-600">
-              {authMode === "signup"
-                ? "Create an account to start tracking your OJT hours."
-                : "Sign in using username/email or continue with Google."}
-            </p>
-
-            {error ? (
-              <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                {error}
+            {/* Left Side - Content */}
+            <div className="space-y-8">
+              <div>
+                <h1 className="text-5xl md:text-6xl font-bold text-slate-900 mb-6 leading-tight">
+                  Track Your <span className="text-blue-600">OJT Progress</span>
+                </h1>
+                <p className="text-lg text-slate-600 leading-relaxed">
+                  A clean, intuitive platform to monitor your on-the-job training hours and professional development journey.
+                </p>
               </div>
-            ) : null}
+              
+              <div className="space-y-4">
+                <div className="flex items-start gap-4">
+                  <div className="mt-1 flex-shrink-0">
+                    <div className="flex items-center justify-center h-6 w-6 rounded-full bg-blue-100">
+                      <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-slate-900">Daily Time Tracking</h3>
+                    <p className="text-slate-600 text-sm">Log your work hours with accurate records</p>
+                  </div>
+                </div>
 
-            <form onSubmit={handleAuthSubmit} className="mt-5 space-y-3">
-              {authMode === "signup" ? (
-                <>
-                  <input
-                    type="text"
-                    value={authForm.username}
-                    onChange={(e) =>
-                      setAuthForm((prev) => ({ ...prev, username: e.target.value }))
-                    }
-                    placeholder="Username"
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400"
-                  />
-                  <input
-                    type="text"
-                    value={authForm.name}
-                    onChange={(e) => setAuthForm((prev) => ({ ...prev, name: e.target.value }))}
-                    placeholder="Full Name"
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400"
-                  />
-                  <input
-                    type="email"
-                    value={authForm.email}
-                    onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
-                    placeholder="Email"
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400"
-                  />
-                </>
-              ) : (
-                <input
-                  type="text"
-                  value={authForm.identifier}
-                  onChange={(e) =>
-                    setAuthForm((prev) => ({ ...prev, identifier: e.target.value }))
-                  }
-                  placeholder="Username or Email"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400"
-                />
-              )}
+                <div className="flex items-start gap-4">
+                  <div className="mt-1 flex-shrink-0">
+                    <div className="flex items-center justify-center h-6 w-6 rounded-full bg-blue-100">
+                      <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-slate-900">Progress Dashboard</h3>
+                    <p className="text-slate-600 text-sm">Visualize your growth with charts</p>
+                  </div>
+                </div>
 
-              <div className="relative">
-                <input
-                  type={showAuthPassword ? "text" : "password"}
-                  value={authForm.password}
-                  onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
-                  placeholder="Password"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 pr-12 text-slate-900 placeholder-slate-400"
-                />
+                <div className="flex items-start gap-4">
+                  <div className="mt-1 flex-shrink-0">
+                    <div className="flex items-center justify-center h-6 w-6 rounded-full bg-blue-100">
+                      <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-slate-900">Weekly Reports</h3>
+                    <p className="text-slate-600 text-sm">Document your experiences</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="mt-1 flex-shrink-0">
+                    <div className="flex items-center justify-center h-6 w-6 rounded-full bg-blue-100">
+                      <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-slate-900">Export Reports</h3>
+                    <p className="text-slate-600 text-sm">Generate professional Excel DTR</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Side - Login Card */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.6, delay: 0.2 }}
+              className="h-full flex items-center justify-center lg:justify-end"
+            >
+              <div className="w-full max-w-sm bg-white rounded-2xl shadow-lg border border-blue-100 p-8">
+                <div className="mb-8">
+                  <h2 className="text-2xl font-bold text-slate-900 mb-2">Get Started</h2>
+                  <p className="text-slate-600 text-sm">Sign in with Google to begin</p>
+                </div>
+
+                {error ? (
+                  <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {error}
+                  </div>
+                ) : null}
+
                 <button
                   type="button"
-                  onClick={() => setShowAuthPassword((prev) => !prev)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-                  aria-label={showAuthPassword ? "Hide password" : "Show password"}
-                  title={showAuthPassword ? "Hide password" : "Show password"}
+                  onClick={handleGoogleSignIn}
+                  disabled={googleLoading}
+                  className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-blue-50 to-blue-100 border-2 border-blue-200 hover:border-blue-400 hover:from-blue-100 hover:to-blue-150 rounded-lg px-4 py-3 font-semibold text-slate-800 transition-all disabled:opacity-60 mb-8"
                 >
-                  {showAuthPassword ? (
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      className="h-5 w-5"
-                    >
-                      <path d="M3 3l18 18" />
-                      <path d="M10.58 10.58a2 2 0 102.83 2.83" />
-                      <path d="M16.68 16.67A10.94 10.94 0 0112 18C7 18 3 12 3 12a21.77 21.77 0 014.22-4.94" />
-                      <path d="M9.88 5.09A10.94 10.94 0 0112 5c5 0 9 7 9 7a21.83 21.83 0 01-1.67 2.68" />
-                    </svg>
-                  ) : (
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      className="h-5 w-5"
-                    >
-                      <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  )}
+                  <svg className="w-5 h-5" viewBox="0 0 24 24">
+                    <path fill="currentColor" d="M12.545,10.239v3.821h5.445c-0.712,2.315-2.647,3.972-5.445,3.972c-3.332,0-6.033-2.701-6.033-6.032 c0-3.331,2.701-6.032,6.033-6.032c1.498,0,2.866,0.549,3.921,1.453l2.814-2.814C17.461,2.268,15.365,1.5,12.545,1.5 c-6.135,0-11.108,4.992-11.108,11.032c0,6.041,4.973,11.032,11.108,11.032c3.079,0,5.87-1.313,7.8-3.457l0.529,-0.528 v-2.2h-8.231V10.239z"/>
+                  </svg>
+                  {googleLoading ? "Signing in..." : "Continue with Google"}
                 </button>
+
+                <div className="space-y-2 text-xs text-slate-600">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-green-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                    <span>Secure Google Authentication</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-green-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                    <span>Your data is encrypted</span>
+                  </div>
+                </div>
               </div>
-
-              <button
-                type="submit"
-                disabled={authLoading}
-                className="w-full rounded-lg bg-blue-600 px-3 py-2 font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-              >
-                {authLoading
-                  ? authMode === "signup"
-                    ? "Creating account..."
-                    : "Signing in..."
-                  : authMode === "signup"
-                    ? "Create Account"
-                    : "Sign In"}
-              </button>
-            </form>
-
-            <button
-              type="button"
-              onClick={handleGoogleSignIn}
-              disabled={googleLoading}
-              className="mt-3 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-60"
-            >
-              {googleLoading ? "Connecting to Google..." : "Continue with Google"}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setError("");
-                setAuthMode((prev) => (prev === "login" ? "signup" : "login"));
-              }}
-              className="mt-4 w-full text-sm text-blue-600 hover:text-blue-700"
-            >
-              {authMode === "signup"
-                ? "Already have an account? Sign in"
-                : "No account yet? Sign up"}
-            </button>
+            </motion.div>
           </motion.div>
+        </div>
+
+        {/* Footer */}
+        <div className="border-t border-blue-100 bg-white/50 backdrop-blur-sm mt-auto">
+          <div className="max-w-7xl mx-auto px-4 md:px-8 py-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
+              <div>
+                <h3 className="font-semibold text-slate-900 mb-3">About</h3>
+                <p className="text-sm text-slate-600">OJT Tracker helps you manage and track your on-the-job training hours with ease.</p>
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-900 mb-3">Features</h3>
+                <ul className="space-y-2 text-sm text-slate-600">
+                  <li>Time tracking</li>
+                  <li>Progress monitoring</li>
+                  <li>Report generation</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-900 mb-3">Support</h3>
+                <p className="text-sm text-slate-600">Need help? Contact us for assistance with your OJT tracking.</p>
+              </div>
+            </div>
+            <div className="border-t border-blue-100 pt-6 flex flex-col md:flex-row items-center justify-between">
+              <p className="text-sm text-slate-600">© 2026 OJT Tracker. All rights reserved.</p>
+              <div className="flex gap-6 mt-4 md:mt-0">
+                <a href="#" className="text-sm text-slate-600 hover:text-blue-600 transition">Privacy Policy</a>
+                <a href="#" className="text-sm text-slate-600 hover:text-blue-600 transition">Terms of Service</a>
+                <a href="#" className="text-sm text-slate-600 hover:text-blue-600 transition">Contact</a>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -2939,7 +2944,7 @@ export default function App() {
       >
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <p>Personal OJT Tracker</p>
-          <p>Version 1.1</p>
+          <p>Version 1.2</p>
         </div>
       </footer>
 
