@@ -2,13 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import Calendar from "react-calendar";
 import axios from "axios";
-import {
-  GoogleAuthProvider,
-  getRedirectResult,
-  signInWithPopup,
-  signInWithRedirect,
-} from "firebase/auth";
-import { getFirebaseAuthClient, isFirebaseConfigured } from "./firebase";
+import { getSupabaseClient, isSupabaseConfigured } from "./supabase";
 import {
   LineChart,
   Line,
@@ -126,8 +120,6 @@ const hasPlaceholderApiUrl = /your-backend\.onrender\.com|example\.com|<backend-
 const hasMissingHostedApiUrl = !configuredApiUrl && !isLocalFrontend;
 const hasHostedLocalApiUrl =
   !isLocalFrontend && /https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(configuredApiUrl);
-const isMobileDevice =
-  typeof navigator !== "undefined" && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 
 export default function App() {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "");
@@ -236,19 +228,10 @@ export default function App() {
   }, [authUser]);
 
   const handleGoogleAuthError = async (authError) => {
-    const firebaseCode = typeof authError?.code === "string" ? authError.code : "";
     const backendMessage = getGoogleAuthErrorText(authError);
 
     if (backendMessage) {
-      if (String(backendMessage).toLowerCase().includes("cloud firestore api is disabled")) {
-        setError(
-          "Google sign in failed: Cloud Firestore API is disabled for your project. Enable Firestore API in Google Cloud Console, then retry after propagation."
-        );
-      } else if (String(backendMessage).toLowerCase().includes("no firestore database exists yet")) {
-        setError(
-          "Google sign in failed: Firestore database is not created yet. Create Firestore Database in Firebase Console, then retry."
-        );
-      } else if (String(backendMessage).toLowerCase().includes("the page could not be found")) {
+      if (String(backendMessage).toLowerCase().includes("the page could not be found")) {
         setError(
           "Google sign in failed: backend route not found. Set VITE_API_URL to your backend base URL (with or without /api), redeploy, then verify /api/health works."
         );
@@ -259,24 +242,6 @@ export default function App() {
       } else {
         setError(`Google sign in failed: ${backendMessage}`);
       }
-    } else if (firebaseCode === "auth/operation-not-allowed") {
-      setError("Google sign-in is disabled in Firebase Console. Enable Google provider in Authentication > Sign-in method.");
-    } else if (firebaseCode === "auth/configuration-not-found") {
-      setError(
-        "Google sign-in configuration is missing. In Firebase Console > Authentication > Sign-in method, enable Google provider and set a project support email, then retry."
-      );
-    } else if (firebaseCode === "auth/unauthorized-domain") {
-      const currentHost =
-        typeof window !== "undefined" && window.location?.hostname
-          ? window.location.hostname
-          : "your app domain";
-      setError(
-        `This domain is not authorized for Firebase Auth. Add ${currentHost} in Firebase Authentication > Settings > Authorized domains.`
-      );
-    } else if (firebaseCode === "auth/popup-blocked") {
-      setError("Google popup was blocked by the browser. Allow popups and try again.");
-    } else if (firebaseCode === "auth/popup-closed-by-user") {
-      setError("Google sign-in popup was closed before completing login.");
     } else if (!authError?.response) {
       try {
         await axios.get(`${API_URL}/health`, {
@@ -300,9 +265,7 @@ export default function App() {
     } else {
       setError(
         `Google sign in failed: ${
-          firebaseCode ||
-          getGoogleAuthErrorText(authError) ||
-          "Unknown error"
+          getGoogleAuthErrorText(authError) || "Unknown error"
         }`
       );
     }
@@ -334,13 +297,16 @@ export default function App() {
     return false;
   };
 
-  const completeGoogleBackendAuth = async (userCredential) => {
-    const firebaseIdToken = await userCredential.user.getIdToken();
+  const completeGoogleBackendAuth = async (supabaseAccessToken) => {
+    if (!supabaseAccessToken) {
+      throw new Error("Missing Supabase access token");
+    }
+
     const submitGoogleToken = () =>
       axios.post(
         `${API_URL}/auth/google`,
         {
-          firebaseIdToken,
+          supabaseAccessToken,
         },
         {
           timeout: 45000,
@@ -380,16 +346,22 @@ export default function App() {
     let cancelled = false;
 
     const handleRedirectSignIn = async () => {
-      if (!isFirebaseConfigured || hasMissingHostedApiUrl || hasPlaceholderApiUrl) return;
-      const firebaseAuth = getFirebaseAuthClient();
-      if (!firebaseAuth) return;
+      if (hasMissingHostedApiUrl || hasPlaceholderApiUrl) return;
+
+      const supabase = getSupabaseClient();
+      if (!supabase) return;
 
       try {
-        const redirectResult = await getRedirectResult(firebaseAuth);
-        if (!redirectResult?.user || cancelled) return;
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) {
+          throw sessionError;
+        }
+
+        const accessToken = sessionData?.session?.access_token;
+        if (!accessToken || cancelled) return;
 
         setGoogleLoading(true);
-        await completeGoogleBackendAuth(redirectResult);
+        await completeGoogleBackendAuth(accessToken);
         if (!cancelled) {
           setError("");
         }
@@ -537,36 +509,32 @@ export default function App() {
         return;
       }
 
-      if (!isFirebaseConfigured) {
+      if (!isSupabaseConfigured) {
         setError(
-          "Google sign in is not configured. On Vercel, add VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, and VITE_FIREBASE_APP_ID in Project Settings > Environment Variables, then redeploy."
+          "Google sign in is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your frontend environment and redeploy."
         );
         return;
       }
 
-      const firebaseAuth = getFirebaseAuthClient();
-      if (!firebaseAuth) {
+      const supabase = getSupabaseClient();
+      if (!supabase) {
         setError(
-          "Google sign in is not configured. On Vercel, add VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, and VITE_FIREBASE_APP_ID in Project Settings > Environment Variables, then redeploy."
+          "Google sign in is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your frontend environment and redeploy."
         );
         return;
       }
 
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: "select_account" });
-      if (isMobileDevice) {
-        try {
-          await signInWithRedirect(firebaseAuth, provider);
-          return;
-        } catch (redirectError) {
-          const userCredential = await signInWithPopup(firebaseAuth, provider);
-          await completeGoogleBackendAuth(userCredential);
-          return;
-        }
-      }
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
+          queryParams: { prompt: "select_account" },
+        },
+      });
 
-      const userCredential = await signInWithPopup(firebaseAuth, provider);
-      await completeGoogleBackendAuth(userCredential);
+      if (oauthError) {
+        throw oauthError;
+      }
     } catch (authError) {
       await handleGoogleAuthError(authError);
     } finally {
@@ -579,7 +547,16 @@ export default function App() {
     setShowLogoutConfirm(true);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        await supabase.auth.signOut();
+      }
+    } catch {
+      // Continue clearing local auth state even if remote signout fails.
+    }
+
     persistAuth("", null);
     setEntries([]);
     setShowProfileDropdown(false);
@@ -1378,7 +1355,7 @@ export default function App() {
 
   if (!authToken) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-slate-50 to-blue-100 flex flex-col">
+      <div className="min-h-screen bg-linear-to-br from-blue-50 via-slate-50 to-blue-100 flex flex-col">
         {/* Navigation Bar */}
         <div className="border-b border-blue-100 bg-white/80 backdrop-blur-sm sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-4 md:px-8 py-4 flex items-center justify-between">
@@ -1408,7 +1385,7 @@ export default function App() {
               
               <div className="space-y-4">
                 <div className="flex items-start gap-4">
-                  <div className="mt-1 flex-shrink-0">
+                  <div className="mt-1 shrink-0">
                     <div className="flex items-center justify-center h-6 w-6 rounded-full bg-blue-100">
                       <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
@@ -1422,7 +1399,7 @@ export default function App() {
                 </div>
 
                 <div className="flex items-start gap-4">
-                  <div className="mt-1 flex-shrink-0">
+                  <div className="mt-1 shrink-0">
                     <div className="flex items-center justify-center h-6 w-6 rounded-full bg-blue-100">
                       <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
@@ -1436,7 +1413,7 @@ export default function App() {
                 </div>
 
                 <div className="flex items-start gap-4">
-                  <div className="mt-1 flex-shrink-0">
+                  <div className="mt-1 shrink-0">
                     <div className="flex items-center justify-center h-6 w-6 rounded-full bg-blue-100">
                       <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
@@ -1450,7 +1427,7 @@ export default function App() {
                 </div>
 
                 <div className="flex items-start gap-4">
-                  <div className="mt-1 flex-shrink-0">
+                  <div className="mt-1 shrink-0">
                     <div className="flex items-center justify-center h-6 w-6 rounded-full bg-blue-100">
                       <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
@@ -1488,7 +1465,7 @@ export default function App() {
                   type="button"
                   onClick={handleGoogleSignIn}
                   disabled={googleLoading}
-                  className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-blue-50 to-blue-100 border-2 border-blue-200 hover:border-blue-400 hover:from-blue-100 hover:to-blue-150 rounded-lg px-4 py-3 font-semibold text-slate-800 transition-all disabled:opacity-60 mb-8"
+                  className="w-full flex items-center justify-center gap-3 bg-linear-to-r from-blue-50 to-blue-100 border-2 border-blue-200 hover:border-blue-400 hover:from-blue-100 hover:to-blue-150 rounded-lg px-4 py-3 font-semibold text-slate-800 transition-all disabled:opacity-60 mb-8"
                 >
                   <svg className="w-5 h-5" viewBox="0 0 24 24">
                     <path fill="currentColor" d="M12.545,10.239v3.821h5.445c-0.712,2.315-2.647,3.972-5.445,3.972c-3.332,0-6.033-2.701-6.033-6.032 c0-3.331,2.701-6.032,6.033-6.032c1.498,0,2.866,0.549,3.921,1.453l2.814-2.814C17.461,2.268,15.365,1.5,12.545,1.5 c-6.135,0-11.108,4.992-11.108,11.032c0,6.041,4.973,11.032,11.108,11.032c3.079,0,5.87-1.313,7.8-3.457l0.529,-0.528 v-2.2h-8.231V10.239z"/>
@@ -1498,13 +1475,13 @@ export default function App() {
 
                 <div className="space-y-2 text-xs text-slate-600">
                   <div className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-green-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <svg className="w-4 h-4 text-green-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                     </svg>
                     <span>Secure Google Authentication</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-green-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <svg className="w-4 h-4 text-green-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                     </svg>
                     <span>Your data is encrypted</span>
@@ -1554,8 +1531,8 @@ export default function App() {
     return (
       <div className={`min-h-screen flex items-center justify-center ${
         themeMode === "light"
-          ? "bg-gradient-to-br from-slate-100 via-white to-slate-100"
-          : "bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950"
+          ? "bg-linear-to-br from-slate-100 via-white to-slate-100"
+          : "bg-linear-to-br from-slate-950 via-slate-900 to-slate-950"
       }`}>
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-cyan-300/20 border-t-cyan-400 rounded-full animate-spin mx-auto mb-4" />
@@ -1572,8 +1549,8 @@ export default function App() {
       data-theme={themeMode}
       className={`min-h-screen flex flex-col p-4 md:p-8 ${
         themeMode === "light"
-          ? "bg-gradient-to-br from-slate-100 via-white to-slate-100"
-          : "bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950"
+          ? "bg-linear-to-br from-slate-100 via-white to-slate-100"
+          : "bg-linear-to-br from-slate-950 via-slate-900 to-slate-950"
       }`}
     >
       <motion.div
