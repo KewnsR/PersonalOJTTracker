@@ -29,6 +29,7 @@ const AUTH_TOKEN_STORAGE_KEY = "ojtAuthToken";
 const AUTH_USER_STORAGE_KEY = "ojtAuthUser";
 const BACKEND_WARMUP_TIMEOUT_MS = 25000;
 const BACKEND_AUTH_TIMEOUT_MS = 20000;
+const BACKEND_DATA_TIMEOUT_MS = 12000;
 
 const toLocalDateString = (date) => {
   const year = date.getFullYear();
@@ -378,16 +379,15 @@ export default function App() {
   const loadData = async (token = authToken) => {
     try {
       setLoading(true);
+      const requestConfig = {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        timeout: BACKEND_DATA_TIMEOUT_MS,
+      };
+
       const [entriesRes, prefsRes, profileRes] = await Promise.all([
-        axios.get(`${API_URL}/entries`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        }),
-        axios.get(`${API_URL}/preferences`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        }),
-        axios.get(`${API_URL}/profile`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        }),
+        axios.get(`${API_URL}/entries`, requestConfig),
+        axios.get(`${API_URL}/preferences`, requestConfig),
+        axios.get(`${API_URL}/profile`, requestConfig),
       ]);
 
       setEntries(entriesRes.data || []);
