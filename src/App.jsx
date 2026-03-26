@@ -30,6 +30,7 @@ const AUTH_USER_STORAGE_KEY = "ojtAuthUser";
 const BACKEND_WARMUP_TIMEOUT_MS = 25000;
 const BACKEND_AUTH_TIMEOUT_MS = 20000;
 const BACKEND_DATA_TIMEOUT_MS = 12000;
+const LOADING_FAILSAFE_MS = 18000;
 
 const toLocalDateString = (date) => {
   const year = date.getFullYear();
@@ -207,6 +208,20 @@ export default function App() {
       setLoading(false);
     }
   }, [authToken]);
+
+  useEffect(() => {
+    if (!loading || !authToken) return undefined;
+
+    const timeoutId = setTimeout(() => {
+      setLoading(false);
+      setError((prev) => {
+        if (prev) return prev;
+        return "Loading is taking longer than expected. Please refresh or try again in a few seconds.";
+      });
+    }, LOADING_FAILSAFE_MS);
+
+    return () => clearTimeout(timeoutId);
+  }, [loading, authToken]);
 
   useEffect(() => {
     if (!API_URL || hasPlaceholderApiUrl || hasMissingHostedApiUrl || hasHostedLocalApiUrl) {
