@@ -27,6 +27,8 @@ const isLocalFrontend =
 const API_URL = configuredApiUrl || (isLocalFrontend ? "http://localhost:5000/api" : "");
 const AUTH_TOKEN_STORAGE_KEY = "ojtAuthToken";
 const AUTH_USER_STORAGE_KEY = "ojtAuthUser";
+const BACKEND_WARMUP_TIMEOUT_MS = 25000;
+const BACKEND_AUTH_TIMEOUT_MS = 20000;
 
 const toLocalDateString = (date) => {
   const year = date.getFullYear();
@@ -210,7 +212,7 @@ export default function App() {
       return;
     }
 
-    axios.get(`${API_URL}/health`, { timeout: 7000 }).catch(() => {});
+    axios.get(`${API_URL}/health`, { timeout: BACKEND_WARMUP_TIMEOUT_MS }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -274,11 +276,11 @@ export default function App() {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const waitForBackendReady = async () => {
-    const maxChecks = 4;
+    const maxChecks = 2;
     for (let attempt = 0; attempt < maxChecks; attempt += 1) {
       try {
         const response = await axios.get(`${API_URL}/health`, {
-          timeout: 25000,
+          timeout: BACKEND_WARMUP_TIMEOUT_MS,
           validateStatus: () => true,
         });
 
@@ -290,7 +292,7 @@ export default function App() {
       }
 
       if (attempt < maxChecks - 1) {
-        await sleep(4000);
+        await sleep(2500);
       }
     }
 
@@ -309,7 +311,7 @@ export default function App() {
           supabaseAccessToken,
         },
         {
-          timeout: 45000,
+          timeout: BACKEND_AUTH_TIMEOUT_MS,
         }
       );
 
@@ -324,19 +326,10 @@ export default function App() {
 
       const backendReady = await waitForBackendReady();
       if (!backendReady) {
-        throw firstError;
+        throw new Error("Backend is still waking up. Please try Google sign in again in 10-20 seconds.");
       }
 
-      try {
-        res = await submitGoogleToken();
-      } catch (secondError) {
-        if (!isNetworkLikeError(secondError?.message)) {
-          throw secondError;
-        }
-
-        await sleep(3000);
-        res = await submitGoogleToken();
-      }
+      res = await submitGoogleToken();
     }
 
     persistAuth(res.data?.token, res.data?.user);
