@@ -1,17 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import Calendar from "react-calendar";
 import axios from "axios";
 import { getSupabaseClient, isSupabaseConfigured } from "./supabase";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
 import "react-calendar/dist/Calendar.css";
+
+const Calendar = lazy(() => import("react-calendar"));
+const TrendChart = lazy(() => import("./components/TrendChart"));
 
 const normalizeApiUrl = (rawUrl) => {
   const value = String(rawUrl || "").trim().replace(/\/+$/, "");
@@ -27,10 +21,12 @@ const isLocalFrontend =
 const API_URL = configuredApiUrl || (isLocalFrontend ? "http://localhost:5000/api" : "");
 const AUTH_TOKEN_STORAGE_KEY = "ojtAuthToken";
 const AUTH_USER_STORAGE_KEY = "ojtAuthUser";
-const BACKEND_WARMUP_TIMEOUT_MS = 25000;
-const BACKEND_AUTH_TIMEOUT_MS = 20000;
-const BACKEND_DATA_TIMEOUT_MS = 12000;
+const BACKEND_WARMUP_TIMEOUT_MS = 6000;
+const BACKEND_AUTH_TIMEOUT_MS = 10000;
+const BACKEND_DATA_TIMEOUT_MS = 8000;
 const LOADING_FAILSAFE_MS = 18000;
+const BACKEND_READY_RETRY_DELAY_MS = 1200;
+const BACKEND_READY_MAX_CHECKS = 4;
 
 const toLocalDateString = (date) => {
   const year = date.getFullYear();
@@ -263,7 +259,7 @@ export default function App() {
     } else if (!authError?.response) {
       try {
         await axios.get(`${API_URL}/health`, {
-          timeout: 12000,
+          timeout: 3500,
           validateStatus: () => true,
         });
         const fallbackText =
@@ -292,8 +288,7 @@ export default function App() {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const waitForBackendReady = async () => {
-    const maxChecks = 2;
-    for (let attempt = 0; attempt < maxChecks; attempt += 1) {
+    for (let attempt = 0; attempt < BACKEND_READY_MAX_CHECKS; attempt += 1) {
       try {
         const response = await axios.get(`${API_URL}/health`, {
           timeout: BACKEND_WARMUP_TIMEOUT_MS,
@@ -307,8 +302,8 @@ export default function App() {
         // retry until attempts are exhausted
       }
 
-      if (attempt < maxChecks - 1) {
-        await sleep(2500);
+      if (attempt < BACKEND_READY_MAX_CHECKS - 1) {
+        await sleep(BACKEND_READY_RETRY_DELAY_MS);
       }
     }
 
@@ -342,7 +337,7 @@ export default function App() {
 
       const backendReady = await waitForBackendReady();
       if (!backendReady) {
-        throw new Error("Backend is still waking up. Please try Google sign in again in 10-20 seconds.");
+        throw new Error("Backend is still waking up. Please try Google sign in again in a few seconds.");
       }
 
       res = await submitGoogleToken();
@@ -386,10 +381,35 @@ export default function App() {
     };
 
     handleRedirectSignIn();
+
+    const supabase = getSupabaseClient();
+    const authSubscription = supabase?.auth.onAuthStateChange(async (event, session) => {
+      if (cancelled) return;
+      if (event !== "SIGNED_IN" && event !== "TOKEN_REFRESHED") return;
+
+      const accessToken = session?.access_token;
+      if (!accessToken || authToken) return;
+
+      setGoogleLoading(true);
+      try {
+        await completeGoogleBackendAuth(accessToken);
+        if (!cancelled) setError("");
+      } catch (authError) {
+        if (!cancelled) {
+          await handleGoogleAuthError(authError);
+        }
+      } finally {
+        if (!cancelled) {
+          setGoogleLoading(false);
+        }
+      }
+    });
+
     return () => {
       cancelled = true;
+      authSubscription?.data?.subscription?.unsubscribe();
     };
-  }, []);
+  }, [authToken]);
 
   const loadData = async (token = authToken) => {
     try {
@@ -399,30 +419,57 @@ export default function App() {
         timeout: BACKEND_DATA_TIMEOUT_MS,
       };
 
-      const [entriesRes, prefsRes, profileRes] = await Promise.all([
+      const [entriesResult, prefsResult, profileResult] = await Promise.allSettled([
         axios.get(`${API_URL}/entries`, requestConfig),
         axios.get(`${API_URL}/preferences`, requestConfig),
         axios.get(`${API_URL}/profile`, requestConfig),
       ]);
 
-      setEntries(entriesRes.data || []);
+      const getResultData = (result) =>
+        result?.status === "fulfilled" && result?.value?.data ? result.value.data : null;
 
-      const prefs = prefsRes.data || {};
-      setLunchStart(prefs.lunchStartHour ?? prefs.lunchStart ?? 11);
-      setLunchEnd(prefs.lunchEndHour ?? prefs.lunchEnd ?? 12);
-      const hasConfiguredGoal = prefs.requiredOjtHours !== undefined && prefs.requiredOjtHours !== null;
-      const savedRequiredHours = prefs.requiredOjtHours ?? 600;
-      setRequiredOjtHours(savedRequiredHours);
-      setGoalInput(String(savedRequiredHours));
-      setShowLoginSplash(!hasConfiguredGoal);
-      const savedWeeklyJournal = prefs.weeklyJournalNotes || {};
-      setWeeklyJournalNotes(savedWeeklyJournal);
-      const savedThemeMode = prefs.themeMode || localStorage.getItem("themeMode") || "dark";
-      setThemeMode(savedThemeMode === "light" ? "light" : "dark");
+      const getResultStatus = (result) =>
+        result?.status === "rejected" ? result?.reason?.response?.status : undefined;
 
-      if (profileRes.data) {
-        setProfile(profileRes.data);
-        setProfileForm(profileRes.data);
+      if (
+        getResultStatus(entriesResult) === 401 ||
+        getResultStatus(prefsResult) === 401 ||
+        getResultStatus(profileResult) === 401
+      ) {
+        persistAuth("", null);
+        setLoading(false);
+        return;
+      }
+
+      const entriesData = getResultData(entriesResult);
+      if (Array.isArray(entriesData)) {
+        setEntries(entriesData);
+      }
+
+      const prefs = getResultData(prefsResult);
+      if (prefs) {
+        setLunchStart(prefs.lunchStartHour ?? prefs.lunchStart ?? 11);
+        setLunchEnd(prefs.lunchEndHour ?? prefs.lunchEnd ?? 12);
+        const hasConfiguredGoal =
+          prefs.requiredOjtHours !== undefined && prefs.requiredOjtHours !== null;
+        const savedRequiredHours = prefs.requiredOjtHours ?? 600;
+        setRequiredOjtHours(savedRequiredHours);
+        setGoalInput(String(savedRequiredHours));
+        setShowLoginSplash(!hasConfiguredGoal);
+        const savedWeeklyJournal = prefs.weeklyJournalNotes || {};
+        setWeeklyJournalNotes(savedWeeklyJournal);
+        const savedThemeMode = prefs.themeMode || localStorage.getItem("themeMode") || "dark";
+        setThemeMode(savedThemeMode === "light" ? "light" : "dark");
+      }
+
+      const profileData = getResultData(profileResult);
+      if (profileData) {
+        setProfile(profileData);
+        setProfileForm(profileData);
+      }
+
+      if (!entriesData && !prefs && !profileData) {
+        throw new Error("Unable to load dashboard data from server.");
       }
     } catch (loadError) {
       if (loadError?.response?.status === 401) {
@@ -1809,27 +1856,15 @@ export default function App() {
 
             <div className="mb-8 rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow transition-shadow hover:shadow-lg">
           <h3 className="mb-4 text-xl font-bold text-slate-100">Overall Hours Trend</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={overallTrendData}>
-              <XAxis dataKey="name" stroke="#94A3B8" />
-              <YAxis stroke="#94A3B8" />
-              <Tooltip
-                contentStyle={{
-                  background: "#0f172a",
-                  border: "1px solid #334155",
-                  borderRadius: "10px",
-                  color: "#e2e8f0",
-                }}
-              />
-              <Line
-                type="monotone"
-                dataKey="hours"
-                stroke="#22d3ee"
-                strokeWidth={3}
-                dot={{ fill: "#22d3ee", r: 4 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <Suspense
+            fallback={
+              <div className="grid h-65 place-items-center text-sm text-slate-400">
+                Loading chart...
+              </div>
+            }
+          >
+            <TrendChart data={overallTrendData} />
+          </Suspense>
             </div>
 
             <button
@@ -1931,35 +1966,43 @@ export default function App() {
             <div className={`rounded-2xl p-6 shadow ${themeMode === "light" ? "border border-slate-200 bg-white" : "border border-slate-800 bg-slate-900"}`}>
               <h3 className={`mb-4 text-xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>Training Calendar</h3>
               <div className={`calendar-wrapper calendar-wrapper--large rounded-xl p-3 ${themeMode === "light" ? "border border-slate-200 bg-slate-50" : "border border-slate-700 bg-slate-800"}`}>
-                <Calendar
-                  value={selectedDate}
-                  onChange={handleDateSelect}
-                  onClickDay={handleDateSelect}
-                  maxDate={new Date()}
-                  tileClassName={({ date, view }) => {
-                    if (view !== "month") return "";
-                    const dateKey = toLocalDateString(date);
-                    const status = calendarTileIndicators[dateKey];
-                    if (!status) return "";
-                    if (status.hasEntries && status.hasReports) return "calendar-day-has-both";
-                    if (status.hasEntries) return "calendar-day-has-entries";
-                    if (status.hasReports) return "calendar-day-has-reports";
-                    return "";
-                  }}
-                  tileContent={({ date, view }) => {
-                    if (view !== "month") return null;
-                    const dateKey = toLocalDateString(date);
-                    const status = calendarTileIndicators[dateKey];
-                    if (!status?.hasEntries && !status?.hasReports) return null;
+                <Suspense
+                  fallback={
+                    <div className="grid h-90 place-items-center text-sm text-slate-500">
+                      Loading calendar...
+                    </div>
+                  }
+                >
+                  <Calendar
+                    value={selectedDate}
+                    onChange={handleDateSelect}
+                    onClickDay={handleDateSelect}
+                    maxDate={new Date()}
+                    tileClassName={({ date, view }) => {
+                      if (view !== "month") return "";
+                      const dateKey = toLocalDateString(date);
+                      const status = calendarTileIndicators[dateKey];
+                      if (!status) return "";
+                      if (status.hasEntries && status.hasReports) return "calendar-day-has-both";
+                      if (status.hasEntries) return "calendar-day-has-entries";
+                      if (status.hasReports) return "calendar-day-has-reports";
+                      return "";
+                    }}
+                    tileContent={({ date, view }) => {
+                      if (view !== "month") return null;
+                      const dateKey = toLocalDateString(date);
+                      const status = calendarTileIndicators[dateKey];
+                      if (!status?.hasEntries && !status?.hasReports) return null;
 
-                    return (
-                      <div className="calendar-day-indicators" aria-hidden="true">
-                        {status.hasEntries ? <span className="calendar-day-indicator calendar-day-indicator--entry" /> : null}
-                        {status.hasReports ? <span className="calendar-day-indicator calendar-day-indicator--report" /> : null}
-                      </div>
-                    );
-                  }}
-                />
+                      return (
+                        <div className="calendar-day-indicators" aria-hidden="true">
+                          {status.hasEntries ? <span className="calendar-day-indicator calendar-day-indicator--entry" /> : null}
+                          {status.hasReports ? <span className="calendar-day-indicator calendar-day-indicator--report" /> : null}
+                        </div>
+                      );
+                    }}
+                  />
+                </Suspense>
               </div>
               <button
                 type="button"
@@ -2428,11 +2471,19 @@ export default function App() {
                   <div>
                     <label className={`mb-2 block text-sm font-semibold ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>Date</label>
                     <div className={`calendar-wrapper rounded-xl p-3 ${themeMode === "light" ? "border border-slate-200 bg-slate-50" : "border border-slate-700 bg-slate-800/60"}`}>
-                      <Calendar
-                        value={selectedDate}
-                        onChange={handleDateSelect}
-                        maxDate={new Date()}
-                      />
+                      <Suspense
+                        fallback={
+                          <div className="grid h-70 place-items-center text-sm text-slate-500">
+                            Loading calendar...
+                          </div>
+                        }
+                      >
+                        <Calendar
+                          value={selectedDate}
+                          onChange={handleDateSelect}
+                          maxDate={new Date()}
+                        />
+                      </Suspense>
                     </div>
                   </div>
                   <div className="space-y-4">
