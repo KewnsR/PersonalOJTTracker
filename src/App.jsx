@@ -27,6 +27,7 @@ const BACKEND_DATA_TIMEOUT_MS = 8000;
 const LOADING_FAILSAFE_MS = 18000;
 const BACKEND_READY_RETRY_DELAY_MS = 1200;
 const BACKEND_READY_MAX_CHECKS = 4;
+const OAUTH_INIT_TIMEOUT_MS = 12000;
 
 const toLocalDateString = (date) => {
   const year = date.getFullYear();
@@ -111,6 +112,14 @@ const getGoogleAuthErrorText = (authError) => {
     errorToText(authError?.message) ||
     errorToText(authError?.code) ||
     ""
+  );
+};
+
+const isRedirectConfigError = (value) => {
+  const text = String(value || "").toLowerCase();
+  return (
+    text.includes("redirect") &&
+    (text.includes("not allowed") || text.includes("invalid") || text.includes("mismatch"))
   );
 };
 
@@ -245,6 +254,17 @@ export default function App() {
     const backendMessage = getGoogleAuthErrorText(authError);
 
     if (backendMessage) {
+      if (isRedirectConfigError(backendMessage)) {
+        setError(
+          "Google sign in redirect is not allowed. In Supabase Auth URL Configuration, add https://personal-ojt-tracker.vercel.app to Redirect URLs, then retry login."
+        );
+      } else if (String(backendMessage).toLowerCase().includes("oauth")) {
+        setError(`Google sign in failed: ${backendMessage}`);
+      } else if (String(backendMessage).toLowerCase().includes("site can't be reached")) {
+        setError(
+          "Google sign in redirect failed to open. Ensure Supabase redirect URLs include your Vercel URL (not localhost)."
+        );
+      } else
       if (String(backendMessage).toLowerCase().includes("the page could not be found")) {
         setError(
           "Google sign in failed: backend route not found. Set VITE_API_URL to your backend base URL (with or without /api), redeploy, then verify /api/health works."
@@ -410,6 +430,32 @@ export default function App() {
       authSubscription?.data?.subscription?.unsubscribe();
     };
   }, [authToken]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const query = new URLSearchParams(window.location.search || "");
+    const oauthError = query.get("error") || "";
+    const oauthDescription = query.get("error_description") || "";
+
+    if (!oauthError && !oauthDescription) return;
+
+    const raw = decodeURIComponent(oauthDescription || oauthError).replace(/\+/g, " ");
+    if (isRedirectConfigError(raw)) {
+      setError(
+        "Google sign in redirect is not allowed. Add your Vercel URL to Supabase Redirect URLs and try again."
+      );
+    } else {
+      setError(`Google sign in failed: ${raw}`);
+    }
+
+    try {
+      const cleanUrl = `${window.location.origin}${window.location.pathname}`;
+      window.history.replaceState({}, "", cleanUrl);
+    } catch {
+      // ignore URL cleanup failures
+    }
+  }, []);
 
   const loadData = async (token = authToken) => {
     try {
@@ -579,13 +625,30 @@ export default function App() {
         return;
       }
 
-      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      const redirectTo =
+        typeof window !== "undefined"
+          ? window.location.origin
+          : undefined;
+
+      if (!redirectTo) {
+        throw new Error("Unable to determine redirect URL for Google sign in.");
+      }
+
+      const signInPromise = supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
+          redirectTo,
           queryParams: { prompt: "select_account" },
         },
       });
+
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("Google sign in is taking too long to start. If this is mobile, check Supabase redirect URLs for your Vercel domain."));
+        }, OAUTH_INIT_TIMEOUT_MS);
+      });
+
+      const { error: oauthError } = await Promise.race([signInPromise, timeoutPromise]);
 
       if (oauthError) {
         throw oauthError;
