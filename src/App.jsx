@@ -39,7 +39,6 @@ const BACKEND_READY_MAX_CHECKS = 4;
 const OAUTH_INIT_TIMEOUT_MS = 12000;
 const DEFAULT_DIRECT_SUPABASE_MODE =
   isSupabaseConfigured &&
-  !isLocalFrontend &&
   import.meta.env.VITE_USE_SUPABASE_DIRECT !== "false";
 
 const toLocalDateString = (date) => {
@@ -136,7 +135,7 @@ const isRedirectConfigError = (value) => {
   );
 };
 
-const hasPlaceholderApiUrl = /your-backend\.onrender\.com|example\.com|<backend-url>/i.test(
+const hasPlaceholderApiUrl = /your-backend|example\.com|<backend-url>/i.test(
   API_URL
 );
 const hasMissingHostedApiUrl = !configuredApiUrl && !isLocalFrontend && !DEFAULT_DIRECT_SUPABASE_MODE;
@@ -292,7 +291,7 @@ export default function App() {
       } else
       if (String(backendMessage).toLowerCase().includes("the page could not be found")) {
         setError(
-          "Google sign in failed: backend route not found. Set VITE_API_URL to your backend base URL (with or without /api), redeploy, then verify /api/health works."
+          "Google sign in failed: API route not found. If you are not using direct mode, set VITE_API_URL to your backend base URL and verify /api/health works."
         );
       } else if (isNetworkLikeError(backendMessage)) {
         setError(
@@ -325,7 +324,7 @@ export default function App() {
         }
       } catch {
         setError(
-          "Google sign in failed: backend API is unreachable. Set VITE_API_URL to your public backend URL (not localhost) and redeploy."
+          "Google sign in failed: API is unreachable. Enable direct mode with VITE_USE_SUPABASE_DIRECT=true or set a reachable VITE_API_URL."
         );
       }
     } else {
@@ -679,21 +678,21 @@ export default function App() {
       if (!useDirectSupabase) {
         if (hasMissingHostedApiUrl) {
           setError(
-            "Google sign in backend URL is missing. Set VITE_API_URL to your public backend URL and redeploy."
+            "Google sign in API URL is missing. Set VITE_API_URL or enable VITE_USE_SUPABASE_DIRECT=true."
           );
           return;
         }
 
         if (hasHostedLocalApiUrl) {
           setError(
-            `Google sign in backend URL is localhost (${configuredApiUrl}). Set VITE_API_URL to your public backend URL and redeploy.`
+            `Google sign in API URL is localhost (${configuredApiUrl}). Use a public API URL or enable VITE_USE_SUPABASE_DIRECT=true.`
           );
           return;
         }
 
         if (hasPlaceholderApiUrl) {
           setError(
-            `Google sign in backend URL is still placeholder. Current VITE_API_URL: ${configuredApiUrl || "(empty)"}. In Vercel Project Settings > Environment Variables, set VITE_API_URL to your real public backend URL (or backend root), include Production scope, then redeploy.`
+            `Google sign in API URL is still placeholder. Current VITE_API_URL: ${configuredApiUrl || "(empty)"}. Set a real API URL or enable VITE_USE_SUPABASE_DIRECT=true.`
           );
           return;
         }
