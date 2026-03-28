@@ -25,6 +25,7 @@ It is built for simple progress tracking during internship or on-the-job trainin
 Create a `.env` file for local use:
 
 - `VITE_API_URL=http://localhost:5000`
+- `VITE_USE_SUPABASE_DIRECT=true` (optional, recommended for Vercel + Supabase-only deployments)
 - `VITE_SUPABASE_URL=your_supabase_project_url`
 - `VITE_SUPABASE_ANON_KEY=your_supabase_anon_key`
 - `JWT_SECRET=your_secret_here`
@@ -48,3 +49,8 @@ Create a `.env` file for local use:
 
 ## Deployment (Render)
 This project includes `render.yaml` for API deployment.
+
+## Deployment (Vercel + Supabase only)
+- Set `VITE_USE_SUPABASE_DIRECT=true` in Vercel environment variables.
+- `VITE_API_URL` is optional in this mode.
+- Google login and data operations run directly against Supabase from the frontend.

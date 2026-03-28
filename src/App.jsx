@@ -2,6 +2,15 @@ import React, { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import axios from "axios";
 import { getSupabaseClient, isSupabaseConfigured } from "./supabase";
+import {
+  directCreateEntry,
+  directDeleteEntry,
+  directGoogleAuth,
+  directLoadDashboard,
+  directUpdateEntry,
+  directUpdatePreferences,
+  directUpdateProfile,
+} from "./supabaseApi";
 import "react-calendar/dist/Calendar.css";
 
 const Calendar = lazy(() => import("react-calendar"));
@@ -28,6 +37,10 @@ const LOADING_FAILSAFE_MS = 18000;
 const BACKEND_READY_RETRY_DELAY_MS = 1200;
 const BACKEND_READY_MAX_CHECKS = 4;
 const OAUTH_INIT_TIMEOUT_MS = 12000;
+const DEFAULT_DIRECT_SUPABASE_MODE =
+  isSupabaseConfigured &&
+  !isLocalFrontend &&
+  import.meta.env.VITE_USE_SUPABASE_DIRECT !== "false";
 
 const toLocalDateString = (date) => {
   const year = date.getFullYear();
@@ -126,9 +139,11 @@ const isRedirectConfigError = (value) => {
 const hasPlaceholderApiUrl = /your-backend\.onrender\.com|example\.com|<backend-url>/i.test(
   API_URL
 );
-const hasMissingHostedApiUrl = !configuredApiUrl && !isLocalFrontend;
+const hasMissingHostedApiUrl = !configuredApiUrl && !isLocalFrontend && !DEFAULT_DIRECT_SUPABASE_MODE;
 const hasHostedLocalApiUrl =
-  !isLocalFrontend && /https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(configuredApiUrl);
+  !isLocalFrontend &&
+  !DEFAULT_DIRECT_SUPABASE_MODE &&
+  /https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(configuredApiUrl);
 
 export default function App() {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "");
@@ -136,6 +151,7 @@ export default function App() {
     const stored = localStorage.getItem(AUTH_USER_STORAGE_KEY);
     return stored ? JSON.parse(stored) : null;
   });
+  const [useDirectSupabase, setUseDirectSupabase] = useState(DEFAULT_DIRECT_SUPABASE_MODE);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [showLoginSplash, setShowLoginSplash] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -198,6 +214,11 @@ export default function App() {
   const [entryDeleteTarget, setEntryDeleteTarget] = useState(null);
 
   const applyAuthHeader = (token) => {
+    if (useDirectSupabase) {
+      delete axios.defaults.headers.common.Authorization;
+      return;
+    }
+
     if (token) {
       axios.defaults.headers.common.Authorization = `Bearer ${token}`;
     } else {
@@ -212,7 +233,7 @@ export default function App() {
     } else {
       setLoading(false);
     }
-  }, [authToken]);
+  }, [authToken, useDirectSupabase]);
 
   useEffect(() => {
     if (!loading || !authToken) return undefined;
@@ -229,12 +250,16 @@ export default function App() {
   }, [loading, authToken]);
 
   useEffect(() => {
+    if (useDirectSupabase) {
+      return;
+    }
+
     if (!API_URL || hasPlaceholderApiUrl || hasMissingHostedApiUrl || hasHostedLocalApiUrl) {
       return;
     }
 
     axios.get(`${API_URL}/health`, { timeout: BACKEND_WARMUP_TIMEOUT_MS }).catch(() => {});
-  }, []);
+  }, [useDirectSupabase]);
 
   useEffect(() => {
     if (!authUser) return;
@@ -277,6 +302,13 @@ export default function App() {
         setError(`Google sign in failed: ${backendMessage}`);
       }
     } else if (!authError?.response) {
+      if (useDirectSupabase) {
+        setError(
+          "Google sign in failed due to network issues. Please check your internet and try again."
+        );
+        return;
+      }
+
       try {
         await axios.get(`${API_URL}/health`, {
           timeout: 3500,
@@ -308,6 +340,10 @@ export default function App() {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const waitForBackendReady = async () => {
+    if (useDirectSupabase) {
+      return true;
+    }
+
     for (let attempt = 0; attempt < BACKEND_READY_MAX_CHECKS; attempt += 1) {
       try {
         const response = await axios.get(`${API_URL}/health`, {
@@ -335,6 +371,12 @@ export default function App() {
       throw new Error("Missing Supabase access token");
     }
 
+    if (useDirectSupabase) {
+      const directAuth = await directGoogleAuth(supabaseAccessToken);
+      persistAuth(directAuth.token, directAuth.user);
+      return;
+    }
+
     const submitGoogleToken = () =>
       axios.post(
         `${API_URL}/auth/google`,
@@ -353,6 +395,16 @@ export default function App() {
     } catch (firstError) {
       if (!isNetworkLikeError(firstError?.message)) {
         throw firstError;
+      }
+
+      // When backend is unreachable on mobile, switch to direct Supabase mode.
+      try {
+        const directAuth = await directGoogleAuth(supabaseAccessToken);
+        setUseDirectSupabase(true);
+        persistAuth(directAuth.token, directAuth.user);
+        return;
+      } catch {
+        // Continue backend wake-up flow if direct mode is not possible.
       }
 
       const backendReady = await waitForBackendReady();
@@ -429,7 +481,7 @@ export default function App() {
       cancelled = true;
       authSubscription?.data?.subscription?.unsubscribe();
     };
-  }, [authToken]);
+  }, [authToken, useDirectSupabase]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -460,6 +512,41 @@ export default function App() {
   const loadData = async (token = authToken) => {
     try {
       setLoading(true);
+
+      if (useDirectSupabase) {
+        const directTokenUid =
+          typeof token === "string" && token.startsWith("supabase:")
+            ? token.slice("supabase:".length)
+            : "";
+        const uid = authUser?.id || directTokenUid;
+        if (!uid) {
+          throw new Error("Missing authenticated user context.");
+        }
+
+        const dashboard = await directLoadDashboard(uid, authUser);
+        const prefs = dashboard.preferences || {};
+
+        setEntries(dashboard.entries || []);
+        setLunchStart(prefs.lunchStartHour ?? prefs.lunchStart ?? 11);
+        setLunchEnd(prefs.lunchEndHour ?? prefs.lunchEnd ?? 12);
+        const hasConfiguredGoal =
+          prefs.requiredOjtHours !== undefined && prefs.requiredOjtHours !== null;
+        const savedRequiredHours = prefs.requiredOjtHours ?? 600;
+        setRequiredOjtHours(savedRequiredHours);
+        setGoalInput(String(savedRequiredHours));
+        setShowLoginSplash(!hasConfiguredGoal);
+        setWeeklyJournalNotes(prefs.weeklyJournalNotes || {});
+        const savedThemeMode = prefs.themeMode || localStorage.getItem("themeMode") || "dark";
+        setThemeMode(savedThemeMode === "light" ? "light" : "dark");
+
+        if (dashboard.profile) {
+          setProfile(dashboard.profile);
+          setProfileForm(dashboard.profile);
+        }
+
+        return;
+      }
+
       const requestConfig = {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         timeout: BACKEND_DATA_TIMEOUT_MS,
@@ -589,25 +676,27 @@ export default function App() {
     setGoogleLoading(true);
 
     try {
-      if (hasMissingHostedApiUrl) {
-        setError(
-          "Google sign in backend URL is missing. Set VITE_API_URL to your public backend URL and redeploy."
-        );
-        return;
-      }
+      if (!useDirectSupabase) {
+        if (hasMissingHostedApiUrl) {
+          setError(
+            "Google sign in backend URL is missing. Set VITE_API_URL to your public backend URL and redeploy."
+          );
+          return;
+        }
 
-      if (hasHostedLocalApiUrl) {
-        setError(
-          `Google sign in backend URL is localhost (${configuredApiUrl}). Set VITE_API_URL to your public backend URL and redeploy.`
-        );
-        return;
-      }
+        if (hasHostedLocalApiUrl) {
+          setError(
+            `Google sign in backend URL is localhost (${configuredApiUrl}). Set VITE_API_URL to your public backend URL and redeploy.`
+          );
+          return;
+        }
 
-      if (hasPlaceholderApiUrl) {
-        setError(
-          `Google sign in backend URL is still placeholder. Current VITE_API_URL: ${configuredApiUrl || "(empty)"}. In Vercel Project Settings > Environment Variables, set VITE_API_URL to your real public backend URL (or backend root), include Production scope, then redeploy.`
-        );
-        return;
+        if (hasPlaceholderApiUrl) {
+          setError(
+            `Google sign in backend URL is still placeholder. Current VITE_API_URL: ${configuredApiUrl || "(empty)"}. In Vercel Project Settings > Environment Variables, set VITE_API_URL to your real public backend URL (or backend root), include Production scope, then redeploy.`
+          );
+          return;
+        }
       }
 
       if (!isSupabaseConfigured) {
@@ -791,6 +880,40 @@ export default function App() {
     const payload = { ...form, timeIn: timeIn24, timeOut: timeOut24, hours };
 
     try {
+      if (useDirectSupabase) {
+        const uid = authUser?.id;
+        if (!uid) {
+          throw new Error("Missing authenticated user context.");
+        }
+
+        if (editingId) {
+          const originalEntry = entries.find((it) => getEntryId(it) === editingId);
+          const entryId = originalEntry?._id || originalEntry?.id;
+
+          if (entryId && !String(entryId).startsWith("local-")) {
+            const updatedEntry = await directUpdateEntry(uid, entryId, payload);
+            setEntries((prev) => {
+              const nextEntries = prev.map((it) =>
+                getEntryId(it) === editingId ? { ...it, ...updatedEntry } : it
+              );
+              persistEntriesLocally(nextEntries);
+              return nextEntries;
+            });
+          }
+        } else {
+          const createdEntry = await directCreateEntry(uid, payload);
+          setEntries((prev) => {
+            const nextEntries = [createdEntry, ...prev];
+            persistEntriesLocally(nextEntries);
+            return nextEntries;
+          });
+        }
+
+        setError("");
+        handleCloseModal();
+        return;
+      }
+
       if (editingId) {
         const originalEntry = entries.find((it) => getEntryId(it) === editingId);
         const serverId = originalEntry?._id || originalEntry?.id;
@@ -864,7 +987,14 @@ export default function App() {
     try {
       const serverId = entry?._id || entry?.id;
       if (serverId && !String(serverId).startsWith("local-")) {
-        await axios.delete(`${API_URL}/entries/${encodeURIComponent(serverId)}`);
+        if (useDirectSupabase) {
+          const uid = authUser?.id;
+          if (uid) {
+            await directDeleteEntry(uid, serverId);
+          }
+        } else {
+          await axios.delete(`${API_URL}/entries/${encodeURIComponent(serverId)}`);
+        }
       }
     } catch {
       setError("");
@@ -883,11 +1013,22 @@ export default function App() {
 
   const saveLunchSettings = async () => {
     try {
-      await axios.put(`${API_URL}/preferences`, {
-        lunchStartHour: lunchStart,
-        lunchEndHour: lunchEnd,
-        themeMode,
-      });
+      if (useDirectSupabase) {
+        const uid = authUser?.id;
+        if (uid) {
+          await directUpdatePreferences(uid, {
+            lunchStartHour: lunchStart,
+            lunchEndHour: lunchEnd,
+            themeMode,
+          });
+        }
+      } else {
+        await axios.put(`${API_URL}/preferences`, {
+          lunchStartHour: lunchStart,
+          lunchEndHour: lunchEnd,
+          themeMode,
+        });
+      }
       localStorage.setItem("lunchBreak", JSON.stringify({ start: lunchStart, end: lunchEnd }));
       localStorage.setItem("themeMode", themeMode);
       setShowSettings(false);
@@ -900,9 +1041,13 @@ export default function App() {
 
   const saveProfile = async () => {
     try {
-      const res = await axios.put(`${API_URL}/profile`, profileForm);
-      setProfile(res.data);
-      localStorage.setItem("userProfile", JSON.stringify(res.data));
+      const nextProfile = useDirectSupabase
+        ? await directUpdateProfile(authUser?.id, authUser, profileForm)
+        : (await axios.put(`${API_URL}/profile`, profileForm)).data;
+
+      setProfile(nextProfile);
+      setProfileForm(nextProfile);
+      localStorage.setItem("userProfile", JSON.stringify(nextProfile));
       setShowProfileModal(false);
     } catch {
       setProfile(profileForm);
@@ -920,11 +1065,22 @@ export default function App() {
     }
 
     try {
-      await axios.put(`${API_URL}/preferences`, {
-        lunchStartHour: lunchStart,
-        lunchEndHour: lunchEnd,
-        requiredOjtHours: parsedRequiredHours,
-      });
+      if (useDirectSupabase) {
+        const uid = authUser?.id;
+        if (uid) {
+          await directUpdatePreferences(uid, {
+            lunchStartHour: lunchStart,
+            lunchEndHour: lunchEnd,
+            requiredOjtHours: parsedRequiredHours,
+          });
+        }
+      } else {
+        await axios.put(`${API_URL}/preferences`, {
+          lunchStartHour: lunchStart,
+          lunchEndHour: lunchEnd,
+          requiredOjtHours: parsedRequiredHours,
+        });
+      }
     } catch {
       // Fallback to local persistence only.
     }
@@ -947,11 +1103,22 @@ export default function App() {
     }
 
     try {
-      await axios.put(`${API_URL}/preferences`, {
-        lunchStartHour: lunchStart,
-        lunchEndHour: lunchEnd,
-        requiredOjtHours: parsedRequiredHours,
-      });
+      if (useDirectSupabase) {
+        const uid = authUser?.id;
+        if (uid) {
+          await directUpdatePreferences(uid, {
+            lunchStartHour: lunchStart,
+            lunchEndHour: lunchEnd,
+            requiredOjtHours: parsedRequiredHours,
+          });
+        }
+      } else {
+        await axios.put(`${API_URL}/preferences`, {
+          lunchStartHour: lunchStart,
+          lunchEndHour: lunchEnd,
+          requiredOjtHours: parsedRequiredHours,
+        });
+      }
     } catch {
       // local fallback only
     }
@@ -1383,9 +1550,18 @@ export default function App() {
 
   const persistWeeklyJournalNotes = async (nextJournalNotes) => {
     try {
-      await axios.put(`${API_URL}/preferences`, {
-        weeklyJournalNotes: nextJournalNotes,
-      });
+      if (useDirectSupabase) {
+        const uid = authUser?.id;
+        if (uid) {
+          await directUpdatePreferences(uid, {
+            weeklyJournalNotes: nextJournalNotes,
+          });
+        }
+      } else {
+        await axios.put(`${API_URL}/preferences`, {
+          weeklyJournalNotes: nextJournalNotes,
+        });
+      }
     } catch {
       // local fallback only
     }
