@@ -144,11 +144,26 @@ const hasHostedLocalApiUrl =
   !DEFAULT_DIRECT_SUPABASE_MODE &&
   /https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(configuredApiUrl);
 
+const safeParseJson = (value, fallback) => {
+  if (typeof value !== "string" || !value.trim()) return fallback;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+};
+
+const getCurrentOrigin = () =>
+  typeof window !== "undefined" && window.location?.origin
+    ? window.location.origin
+    : "your deployed domain";
+
 export default function App() {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "");
   const [authUser, setAuthUser] = useState(() => {
-    const stored = localStorage.getItem(AUTH_USER_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : null;
+    const stored = localStorage.getItem(AUTH_USER_STORAGE_KEY) || "";
+    return safeParseJson(stored, null);
   });
   const [useDirectSupabase, setUseDirectSupabase] = useState(DEFAULT_DIRECT_SUPABASE_MODE);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -225,6 +240,18 @@ export default function App() {
     }
   };
 
+  const shouldForceDirectSupabase =
+    !isLocalFrontend &&
+    isSupabaseConfigured &&
+    !useDirectSupabase &&
+    (hasMissingHostedApiUrl || hasPlaceholderApiUrl || hasHostedLocalApiUrl);
+
+  useEffect(() => {
+    if (shouldForceDirectSupabase) {
+      setUseDirectSupabase(true);
+    }
+  }, [shouldForceDirectSupabase]);
+
   useEffect(() => {
     applyAuthHeader(authToken);
     if (authToken) {
@@ -280,7 +307,7 @@ export default function App() {
     if (backendMessage) {
       if (isRedirectConfigError(backendMessage)) {
         setError(
-          "Google sign in redirect is not allowed. In Supabase Auth URL Configuration, add https://personal-ojt-tracker.vercel.app to Redirect URLs, then retry login."
+          `Google sign in redirect is not allowed. In Supabase Auth URL Configuration, add ${getCurrentOrigin()} to Redirect URLs, then retry login.`
         );
       } else if (String(backendMessage).toLowerCase().includes("oauth")) {
         setError(`Google sign in failed: ${backendMessage}`);
@@ -494,7 +521,7 @@ export default function App() {
     const raw = decodeURIComponent(oauthDescription || oauthError).replace(/\+/g, " ");
     if (isRedirectConfigError(raw)) {
       setError(
-        "Google sign in redirect is not allowed. Add your Vercel URL to Supabase Redirect URLs and try again."
+        `Google sign in redirect is not allowed. Add ${getCurrentOrigin()} to Supabase Redirect URLs and try again.`
       );
     } else {
       setError(`Google sign in failed: ${raw}`);
@@ -617,21 +644,21 @@ export default function App() {
       const savedProfile = localStorage.getItem("userProfile");
       const savedThemeMode = localStorage.getItem("themeMode");
 
-      if (stored) setEntries(JSON.parse(stored));
+      if (stored) setEntries(safeParseJson(stored, []));
       if (prefs) {
-        const p = JSON.parse(prefs);
+        const p = safeParseJson(prefs, {});
         setLunchStart(p.start ?? 11);
         setLunchEnd(p.end ?? 12);
       }
       if (goalPrefs) {
-        const g = JSON.parse(goalPrefs);
+        const g = safeParseJson(goalPrefs, {});
         const savedRequiredHours = Number(g.requiredHours ?? 600);
         setRequiredOjtHours(savedRequiredHours);
         setGoalInput(String(savedRequiredHours));
         setShowGoalProgress(Boolean(g.showGoalProgress ?? true));
       }
       if (localWeeklyJournal) {
-        setWeeklyJournalNotes(JSON.parse(localWeeklyJournal));
+        setWeeklyJournalNotes(safeParseJson(localWeeklyJournal, {}));
       }
       if (savedThemeMode) {
         setThemeMode(savedThemeMode === "light" ? "light" : "dark");
@@ -640,9 +667,11 @@ export default function App() {
         setShowLoginSplash(true);
       }
       if (savedProfile) {
-        const p = JSON.parse(savedProfile);
-        setProfile(p);
-        setProfileForm(p);
+        const p = safeParseJson(savedProfile, null);
+        if (p) {
+          setProfile(p);
+          setProfileForm(p);
+        }
       }
     } finally {
       setLoading(false);
@@ -675,7 +704,16 @@ export default function App() {
     setGoogleLoading(true);
 
     try {
-      if (!useDirectSupabase) {
+      const shouldUseDirectNow =
+        useDirectSupabase ||
+        (isSupabaseConfigured &&
+          (hasMissingHostedApiUrl || hasHostedLocalApiUrl || hasPlaceholderApiUrl));
+
+      if (shouldUseDirectNow && !useDirectSupabase) {
+        setUseDirectSupabase(true);
+      }
+
+      if (!shouldUseDirectNow) {
         if (hasMissingHostedApiUrl) {
           setError(
             "Google sign in API URL is missing. Set VITE_API_URL or enable VITE_USE_SUPABASE_DIRECT=true."
