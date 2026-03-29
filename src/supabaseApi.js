@@ -91,19 +91,32 @@ export const directGoogleAuth = async (supabaseAccessToken) => {
 
   const fallbackUsername = email.split("@")[0] || `user_${uid.slice(0, 6)}`;
 
-  const { data: existingUser, error: userFetchError } = await supabase
+  const { data: existingUserById, error: userByIdFetchError } = await supabase
     .from("users")
     .select("id,name,email,username")
     .eq("id", uid)
     .maybeSingle();
 
-  if (userFetchError) {
-    throw userFetchError;
+  if (userByIdFetchError) {
+    throw userByIdFetchError;
   }
+
+  const { data: existingUserByEmail, error: userByEmailFetchError } = await supabase
+    .from("users")
+    .select("id,name,email,username")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (userByEmailFetchError) {
+    throw userByEmailFetchError;
+  }
+
+  const existingUser = existingUserById || existingUserByEmail;
+  const resolvedUserId = existingUser?.id || uid;
 
   const now = new Date().toISOString();
   const userPayload = {
-    id: uid,
+    id: resolvedUserId,
     name: existingUser?.name || name,
     email: existingUser?.email || email,
     username: existingUser?.username || fallbackUsername,
@@ -121,13 +134,13 @@ export const directGoogleAuth = async (supabaseAccessToken) => {
     throw upsertUserError;
   }
 
-  await ensureUserDefaults(supabase, uid, {
+  await ensureUserDefaults(supabase, upsertedUser.id, {
     name: upsertedUser.name,
     email: upsertedUser.email,
   });
 
   return {
-    token: `supabase:${uid}`,
+    token: `supabase:${upsertedUser.id}`,
     user: toUserResponse(upsertedUser),
   };
 };
