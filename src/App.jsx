@@ -448,7 +448,9 @@ export default function App() {
     let cancelled = false;
 
     const handleRedirectSignIn = async () => {
-      if (hasMissingHostedApiUrl || hasPlaceholderApiUrl) return;
+      if (!useDirectSupabase && (hasMissingHostedApiUrl || hasPlaceholderApiUrl || hasHostedLocalApiUrl)) {
+        return;
+      }
 
       const supabase = getSupabaseClient();
       if (!supabase) return;
