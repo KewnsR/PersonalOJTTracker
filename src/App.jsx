@@ -39,6 +39,11 @@ const BACKEND_READY_MAX_CHECKS = 4;
 const OAUTH_INIT_TIMEOUT_MS = 12000;
 const DIRECT_AUTH_TIMEOUT_MS = 15000;
 const DIRECT_DATA_TIMEOUT_MS = 15000;
+const DEFAULT_REQUIRED_OJT_HOURS = 600;
+const DEFAULT_THEME_MODE = "light";
+const HALFDAY_BREAK_MINUTES = 30;
+const HALFDAY_MAX_SHIFT_HOURS = 5;
+const GITHUB_REPO_URL = "https://github.com/KewnsR/OJT-Tracker-System";
 const DEFAULT_DIRECT_SUPABASE_MODE =
   isSupabaseConfigured &&
   import.meta.env.VITE_USE_SUPABASE_DIRECT !== "false";
@@ -166,6 +171,21 @@ const safeParseJson = (value, fallback) => {
   }
 };
 
+const toValidRequiredOjtHours = (value, fallback = DEFAULT_REQUIRED_OJT_HOURS) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const hasGoalBeenConfigured = ({ serverRequiredHours, entryCount = 0 }) => {
+  const normalizedServerRequiredHours = toValidRequiredOjtHours(serverRequiredHours, Number.NaN);
+  const hasCustomServerGoal =
+    Number.isFinite(normalizedServerRequiredHours) &&
+    normalizedServerRequiredHours !== DEFAULT_REQUIRED_OJT_HOURS;
+  const hasRecordedEntries = Number(entryCount) > 0;
+
+  return hasCustomServerGoal || hasRecordedEntries;
+};
+
 const getCurrentOrigin = () =>
   typeof window !== "undefined" && window.location?.origin
     ? window.location.origin
@@ -229,14 +249,14 @@ export default function App() {
   const [entries, setEntries] = useState([]);
   const [form, setForm] = useState({
     date: toLocalDateString(new Date()),
-    timeIn: "09:00",
+    timeIn: "08:00",
     timeOut: "18:00",
     notes: "",
   });
   const persistEntriesLocally = (nextEntries) => {
     localStorage.setItem("ojtData", JSON.stringify(nextEntries));
   };
-  const [timeIn12, setTimeIn12] = useState({ hour: "09", minute: "00", period: "AM" });
+  const [timeIn12, setTimeIn12] = useState({ hour: "08", minute: "00", period: "AM" });
   const [timeOut12, setTimeOut12] = useState({ hour: "06", minute: "00", period: "PM" });
   const [profile, setProfile] = useState({
     name: "OJT Trainee",
@@ -267,11 +287,11 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("dashboard");
-  const [requiredOjtHours, setRequiredOjtHours] = useState(600);
-  const [goalInput, setGoalInput] = useState("600");
+  const [requiredOjtHours, setRequiredOjtHours] = useState(DEFAULT_REQUIRED_OJT_HOURS);
+  const [goalInput, setGoalInput] = useState(String(DEFAULT_REQUIRED_OJT_HOURS));
   const [showGoalProgress, setShowGoalProgress] = useState(true);
   const [weeklyJournalNotes, setWeeklyJournalNotes] = useState({});
-  const [themeMode, setThemeMode] = useState("dark");
+  const [themeMode, setThemeMode] = useState(DEFAULT_THEME_MODE);
   const [journalFromDate, setJournalFromDate] = useState(() =>
     toLocalDateString(getStartOfWeek(new Date()))
   );
@@ -659,15 +679,17 @@ export default function App() {
         setEntries(dashboard.entries || []);
         setLunchStart(prefs.lunchStartHour ?? prefs.lunchStart ?? 11);
         setLunchEnd(prefs.lunchEndHour ?? prefs.lunchEnd ?? 12);
-        const hasConfiguredGoal =
-          prefs.requiredOjtHours !== undefined && prefs.requiredOjtHours !== null;
-        const savedRequiredHours = prefs.requiredOjtHours ?? 600;
+        const hasConfiguredGoal = hasGoalBeenConfigured({
+          serverRequiredHours: prefs.requiredOjtHours,
+          entryCount: Array.isArray(dashboard.entries) ? dashboard.entries.length : 0,
+        });
+        const savedRequiredHours = toValidRequiredOjtHours(prefs.requiredOjtHours);
         setRequiredOjtHours(savedRequiredHours);
         setGoalInput(String(savedRequiredHours));
         setShowLoginSplash(!hasConfiguredGoal);
         setWeeklyJournalNotes(prefs.weeklyJournalNotes || {});
-        const savedThemeMode = prefs.themeMode || localStorage.getItem("themeMode") || "dark";
-        setThemeMode(savedThemeMode === "light" ? "light" : "dark");
+        const savedThemeMode = prefs.themeMode || DEFAULT_THEME_MODE;
+        setThemeMode(savedThemeMode === "dark" ? "dark" : "light");
 
         if (dashboard.profile) {
           setProfile(dashboard.profile);
@@ -713,16 +735,18 @@ export default function App() {
       if (prefs) {
         setLunchStart(prefs.lunchStartHour ?? prefs.lunchStart ?? 11);
         setLunchEnd(prefs.lunchEndHour ?? prefs.lunchEnd ?? 12);
-        const hasConfiguredGoal =
-          prefs.requiredOjtHours !== undefined && prefs.requiredOjtHours !== null;
-        const savedRequiredHours = prefs.requiredOjtHours ?? 600;
+        const hasConfiguredGoal = hasGoalBeenConfigured({
+          serverRequiredHours: prefs.requiredOjtHours,
+          entryCount: Array.isArray(entriesData) ? entriesData.length : 0,
+        });
+        const savedRequiredHours = toValidRequiredOjtHours(prefs.requiredOjtHours);
         setRequiredOjtHours(savedRequiredHours);
         setGoalInput(String(savedRequiredHours));
         setShowLoginSplash(!hasConfiguredGoal);
         const savedWeeklyJournal = prefs.weeklyJournalNotes || {};
         setWeeklyJournalNotes(savedWeeklyJournal);
-        const savedThemeMode = prefs.themeMode || localStorage.getItem("themeMode") || "dark";
-        setThemeMode(savedThemeMode === "light" ? "light" : "dark");
+        const savedThemeMode = prefs.themeMode || DEFAULT_THEME_MODE;
+        setThemeMode(savedThemeMode === "dark" ? "dark" : "light");
       }
 
       const profileData = getResultData(profileResult);
@@ -756,7 +780,7 @@ export default function App() {
       }
       if (goalPrefs) {
         const g = safeParseJson(goalPrefs, {});
-        const savedRequiredHours = Number(g.requiredHours ?? 600);
+        const savedRequiredHours = toValidRequiredOjtHours(g.requiredHours);
         setRequiredOjtHours(savedRequiredHours);
         setGoalInput(String(savedRequiredHours));
         setShowGoalProgress(Boolean(g.showGoalProgress ?? true));
@@ -765,7 +789,7 @@ export default function App() {
         setWeeklyJournalNotes(safeParseJson(localWeeklyJournal, {}));
       }
       if (savedThemeMode) {
-        setThemeMode(savedThemeMode === "light" ? "light" : "dark");
+        setThemeMode(savedThemeMode === "dark" ? "dark" : "light");
       }
       if (!goalPrefs) {
         setShowLoginSplash(true);
@@ -921,7 +945,15 @@ export default function App() {
     const end = outHour * 60 + outMin;
     if (end <= start) return 0;
 
-    let minutes = end - start;
+    const totalMinutes = end - start;
+    let minutes = totalMinutes;
+
+    // Half-day entries get a fixed 30-minute break instead of lunch-window overlap deduction.
+    if (totalMinutes <= HALFDAY_MAX_SHIFT_HOURS * 60) {
+      minutes -= Math.min(HALFDAY_BREAK_MINUTES, minutes);
+      return Number((minutes / 60).toFixed(2));
+    }
+
     const lunchStartMin = lunchStartHour * 60;
     const lunchEndMin = lunchEndHour * 60;
 
@@ -972,11 +1004,11 @@ export default function App() {
     setSelectedDate(new Date());
     setForm({
       date: toLocalDateString(new Date()),
-      timeIn: "09:00",
+      timeIn: "08:00",
       timeOut: "18:00",
       notes: "",
     });
-    setTimeIn12({ hour: "09", minute: "00", period: "AM" });
+    setTimeIn12({ hour: "08", minute: "00", period: "AM" });
     setTimeOut12({ hour: "06", minute: "00", period: "PM" });
     setShowAddModal(true);
   };
@@ -3029,9 +3061,18 @@ export default function App() {
               }`}
             >
               <h2 className={`mb-5 text-2xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>
-                Lunch Break Settings
+                Settings
               </h2>
               <div className="space-y-4">
+                <div
+                  className={`rounded-lg px-3 py-2 text-sm ${
+                    themeMode === "light"
+                      ? "border border-slate-300 bg-slate-100 text-slate-700"
+                      : "border border-slate-700 bg-slate-800 text-slate-200"
+                  }`}
+                >
+                  Half-day break: {HALFDAY_BREAK_MINUTES} minutes (auto-applies to shifts up to {HALFDAY_MAX_SHIFT_HOURS} hours)
+                </div>
                 <div>
                   <label className={`mb-2 block text-sm font-semibold ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>
                     Start Hour
@@ -3292,6 +3333,9 @@ export default function App() {
                     : "border border-slate-700 bg-slate-800 text-slate-100"
                 }`}
               />
+              <p className={`mt-2 text-xs ${themeMode === "light" ? "text-slate-500" : "text-slate-400"}`}>
+                Current required hours: {toValidRequiredOjtHours(goalInput).toFixed(2)}h
+              </p>
 
               <button
                 type="button"
@@ -3360,7 +3404,20 @@ export default function App() {
       >
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <p>Personal OJT Tracker</p>
-          <p>Version 1.2</p>
+          <div className="flex items-center gap-3">
+            <a
+              href="https://github.com/KewnsR/PersonalOJTTracker"
+              target="_blank"
+              rel="noreferrer"
+              className={`text-xs font-semibold underline-offset-2 transition hover:underline ${
+                themeMode === "light"
+                  ? "text-slate-700 hover:text-blue-600"
+                  : "text-slate-200 hover:text-cyan-300"
+              }`}
+            >
+              GitHub
+            </a>
+          </div>
         </div>
       </footer>
 

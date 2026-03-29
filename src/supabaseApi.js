@@ -32,7 +32,7 @@ const ensureUserDefaults = async (supabase, uid, profile = {}) => {
       supervisor: profile.supervisor || "",
       updated_at: now,
     },
-    { onConflict: "user_id" }
+    { onConflict: "user_id", ignoreDuplicates: true }
   );
 
   if (profileError) {
@@ -46,10 +46,10 @@ const ensureUserDefaults = async (supabase, uid, profile = {}) => {
       lunch_end_hour: 12,
       required_ojt_hours: 600,
       weekly_journal_notes: {},
-      theme_mode: "dark",
+      theme_mode: "light",
       updated_at: now,
     },
-    { onConflict: "user_id" }
+    { onConflict: "user_id", ignoreDuplicates: true }
   );
 
   if (prefError) {
@@ -193,7 +193,7 @@ export const directLoadDashboard = async (uid, fallbackUser = null) => {
       lunch_end_hour: 12,
       required_ojt_hours: 600,
       weekly_journal_notes: {},
-      theme_mode: "dark",
+      theme_mode: "light",
       updated_at: now,
     };
 
@@ -240,7 +240,7 @@ export const directLoadDashboard = async (uid, fallbackUser = null) => {
       lunchEndHour: prefs.lunch_end_hour ?? 12,
       requiredOjtHours: prefs.required_ojt_hours ?? 600,
       weeklyJournalNotes: prefs.weekly_journal_notes || {},
-      themeMode: prefs.theme_mode || "dark",
+      themeMode: prefs.theme_mode || "light",
     },
     profile: {
       name: profile.name || fallbackUser?.name || "OJT Trainee",
@@ -338,7 +338,7 @@ export const directUpdatePreferences = async (uid, payload) => {
     lunchEndHour: data.lunch_end_hour ?? 12,
     requiredOjtHours: data.required_ojt_hours ?? 600,
     weeklyJournalNotes: data.weekly_journal_notes || {},
-    themeMode: data.theme_mode || "dark",
+    themeMode: data.theme_mode || "light",
   };
 };
 

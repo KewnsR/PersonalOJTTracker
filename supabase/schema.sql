@@ -28,7 +28,7 @@ create table user_preferences (
   lunch_end_hour integer not null default 12,
   required_ojt_hours integer not null default 600,
   weekly_journal_notes json not null default '{}',
-  theme_mode varchar(50) not null default 'dark',
+  theme_mode varchar(50) not null default 'light',
   updated_at timestamp not null default current_timestamp
 );
 
