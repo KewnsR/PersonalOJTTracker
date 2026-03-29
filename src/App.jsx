@@ -178,6 +178,34 @@ const withTimeout = async (promise, ms, timeoutMessage) => {
   }
 };
 
+const hasOAuthCallbackParams = () => {
+  if (typeof window === "undefined") return false;
+
+  const searchParams = new URLSearchParams(window.location.search || "");
+  const hashParams = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
+
+  return (
+    searchParams.has("code") ||
+    searchParams.has("error") ||
+    searchParams.has("error_description") ||
+    hashParams.has("access_token") ||
+    hashParams.has("refresh_token") ||
+    hashParams.has("error") ||
+    hashParams.has("error_description")
+  );
+};
+
+const clearOAuthParamsFromUrl = () => {
+  if (typeof window === "undefined") return;
+
+  try {
+    const cleanUrl = `${window.location.origin}${window.location.pathname}`;
+    window.history.replaceState({}, "", cleanUrl);
+  } catch {
+    // ignore URL cleanup failures
+  }
+};
+
 export default function App() {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "");
   const [authUser, setAuthUser] = useState(() => {
@@ -486,9 +514,26 @@ export default function App() {
       if (!supabase) return;
 
       try {
-        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) {
-          throw sessionError;
+        let sessionData = null;
+        let sessionError = null;
+        const shouldRetrySession = hasOAuthCallbackParams();
+
+        for (let attempt = 0; attempt < (shouldRetrySession ? 10 : 1); attempt += 1) {
+          const result = await supabase.auth.getSession();
+          sessionData = result.data;
+          sessionError = result.error;
+
+          if (sessionError) {
+            throw sessionError;
+          }
+
+          if (sessionData?.session?.access_token) {
+            break;
+          }
+
+          if (attempt < 9 && shouldRetrySession) {
+            await sleep(500);
+          }
         }
 
         const accessToken = sessionData?.session?.access_token;
@@ -498,6 +543,7 @@ export default function App() {
         await completeGoogleBackendAuth(accessToken);
         if (!cancelled) {
           setError("");
+          clearOAuthParamsFromUrl();
         }
       } catch (authError) {
         if (!cancelled) {
@@ -559,12 +605,7 @@ export default function App() {
       setError(`Google sign in failed: ${raw}`);
     }
 
-    try {
-      const cleanUrl = `${window.location.origin}${window.location.pathname}`;
-      window.history.replaceState({}, "", cleanUrl);
-    } catch {
-      // ignore URL cleanup failures
-    }
+    clearOAuthParamsFromUrl();
   }, []);
 
   const loadData = async (token = authToken) => {
