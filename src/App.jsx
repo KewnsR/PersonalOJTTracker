@@ -37,6 +37,8 @@ const LOADING_FAILSAFE_MS = 18000;
 const BACKEND_READY_RETRY_DELAY_MS = 1200;
 const BACKEND_READY_MAX_CHECKS = 4;
 const OAUTH_INIT_TIMEOUT_MS = 12000;
+const DIRECT_AUTH_TIMEOUT_MS = 15000;
+const DIRECT_DATA_TIMEOUT_MS = 15000;
 const DEFAULT_DIRECT_SUPABASE_MODE =
   isSupabaseConfigured &&
   import.meta.env.VITE_USE_SUPABASE_DIRECT !== "false";
@@ -158,6 +160,23 @@ const getCurrentOrigin = () =>
   typeof window !== "undefined" && window.location?.origin
     ? window.location.origin
     : "your deployed domain";
+
+const withTimeout = async (promise, ms, timeoutMessage) => {
+  let timerId;
+  try {
+    const timeoutPromise = new Promise((_, reject) => {
+      timerId = setTimeout(() => {
+        reject(new Error(timeoutMessage));
+      }, ms);
+    });
+
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timerId) {
+      clearTimeout(timerId);
+    }
+  }
+};
 
 export default function App() {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "");
@@ -329,6 +348,13 @@ export default function App() {
       }
     } else if (!authError?.response) {
       if (useDirectSupabase) {
+        if (String(authError?.message || "").toLowerCase().includes("timed out")) {
+          setError(
+            "Google sign in timed out while waiting for Supabase. Please retry, then check internet stability."
+          );
+          return;
+        }
+
         setError(
           "Google sign in failed due to network issues. Please check your internet and try again."
         );
@@ -398,7 +424,11 @@ export default function App() {
     }
 
     if (useDirectSupabase) {
-      const directAuth = await directGoogleAuth(supabaseAccessToken);
+      const directAuth = await withTimeout(
+        directGoogleAuth(supabaseAccessToken),
+        DIRECT_AUTH_TIMEOUT_MS,
+        "Google sign in timed out while contacting Supabase. Please try again."
+      );
       persistAuth(directAuth.token, directAuth.user);
       return;
     }
@@ -551,7 +581,11 @@ export default function App() {
           throw new Error("Missing authenticated user context.");
         }
 
-        const dashboard = await directLoadDashboard(uid, authUser);
+        const dashboard = await withTimeout(
+          directLoadDashboard(uid, authUser),
+          DIRECT_DATA_TIMEOUT_MS,
+          "Loading dashboard from Supabase timed out. Please refresh and try again."
+        );
         const prefs = dashboard.preferences || {};
 
         setEntries(dashboard.entries || []);
