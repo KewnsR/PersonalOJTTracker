@@ -30,6 +30,7 @@ const isLocalFrontend =
 const API_URL = configuredApiUrl || (isLocalFrontend ? "http://localhost:5000/api" : "");
 const AUTH_TOKEN_STORAGE_KEY = "ojtAuthToken";
 const AUTH_USER_STORAGE_KEY = "ojtAuthUser";
+const LAST_AUTH_USER_ID_STORAGE_KEY = "ojtLastAuthUserId";
 const BACKEND_WARMUP_TIMEOUT_MS = 6000;
 const BACKEND_AUTH_TIMEOUT_MS = 10000;
 const BACKEND_DATA_TIMEOUT_MS = 8000;
@@ -788,9 +789,7 @@ export default function App() {
       if (localWeeklyJournal) {
         setWeeklyJournalNotes(safeParseJson(localWeeklyJournal, {}));
       }
-      if (savedThemeMode) {
-        setThemeMode(savedThemeMode === "dark" ? "dark" : "light");
-      }
+      setThemeMode(savedThemeMode === "dark" ? "dark" : DEFAULT_THEME_MODE);
       if (!goalPrefs) {
         setShowLoginSplash(true);
       }
@@ -807,6 +806,22 @@ export default function App() {
   };
 
   const persistAuth = (token, user) => {
+    const nextUserId = user?.id ? String(user.id) : "";
+    const previousUserId = localStorage.getItem(LAST_AUTH_USER_ID_STORAGE_KEY) || "";
+
+    if (nextUserId) {
+      if (previousUserId && previousUserId !== nextUserId) {
+        // Reset shared local cache when switching accounts to avoid stale settings.
+        localStorage.removeItem("ojtGoal");
+        localStorage.removeItem("themeMode");
+        localStorage.removeItem("lunchBreak");
+        localStorage.removeItem("weeklyJournalNotes");
+        localStorage.removeItem("userProfile");
+        localStorage.removeItem("ojtData");
+      }
+      localStorage.setItem(LAST_AUTH_USER_ID_STORAGE_KEY, nextUserId);
+    }
+
     applyAuthHeader(token || "");
     setAuthToken(token || "");
     setAuthUser(user || null);
