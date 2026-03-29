@@ -117,6 +117,16 @@ const isNetworkLikeError = (value) => {
   );
 };
 
+const isStaleSupabaseSessionError = (value) => {
+  const text = String(value || "").toLowerCase();
+  return (
+    text.includes("sub claim") ||
+    text.includes("jwt does not exist") ||
+    text.includes("invalid jwt") ||
+    text.includes("session not found")
+  );
+};
+
 const getGoogleAuthErrorText = (authError) => {
   if (!authError) return "";
   const responseData = authError?.response?.data;
@@ -350,6 +360,23 @@ export default function App() {
 
   const handleGoogleAuthError = async (authError) => {
     const backendMessage = getGoogleAuthErrorText(authError);
+
+    if (isStaleSupabaseSessionError(backendMessage) || isStaleSupabaseSessionError(authError?.message)) {
+      try {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          await supabase.auth.signOut();
+        }
+      } catch {
+        // Continue with local auth reset even if signOut call fails.
+      }
+
+      persistAuth("", null);
+      setError(
+        "Google session expired or mismatched. Please click Continue with Google again to start a fresh sign in."
+      );
+      return;
+    }
 
     if (backendMessage) {
       if (isRedirectConfigError(backendMessage)) {
