@@ -8,7 +8,7 @@ It is built for simple progress tracking during internship or on-the-job trainin
 
 ## Tech Stack
 - React + Vite
-- Supabase (database + Google OAuth)
+- Supabase (database + Google/Outlook OAuth)
 
 ## Quick Start
 1. Install dependencies:
@@ -27,10 +27,11 @@ Create a `.env` file for local use:
 1. Create a Supabase project.
 2. Open SQL Editor and run [supabase/schema.sql](supabase/schema.sql).
 3. In Supabase Authentication, enable Google provider and set Google OAuth credentials.
-4. Add frontend env vars `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
+4. In Supabase Authentication, enable Azure provider for Outlook/Microsoft login.
+5. Add frontend env vars `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
 
 ## Authentication
-- Only Google sign-in is supported.
+- Google and Outlook sign-in are supported.
 - Email/password endpoints are disabled by design.
 
 ## Build
