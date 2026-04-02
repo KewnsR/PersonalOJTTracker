@@ -27,7 +27,13 @@ jobs:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
     - name: Install dependencies
+      run: npm ci --include=optional
+    - name: Repair optional native dependencies
       run: |
-        npm ci --include=optional || npm install --include=optional
+        node -e "require('@tailwindcss/oxide')" || {
+          echo "Missing @tailwindcss/oxide native binding. Reinstalling dependencies..."
+          rm -rf node_modules package-lock.json
+          npm install --include=optional
+        }
     - run: npm run build --if-present
     - run: npm test --if-present
