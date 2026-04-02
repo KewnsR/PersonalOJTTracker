@@ -31,6 +31,9 @@ const API_URL = configuredApiUrl || (isLocalFrontend ? "http://localhost:5000/ap
 const AUTH_TOKEN_STORAGE_KEY = "ojtAuthToken";
 const AUTH_USER_STORAGE_KEY = "ojtAuthUser";
 const LAST_AUTH_USER_ID_STORAGE_KEY = "ojtLastAuthUserId";
+const OAUTH_PROVIDER_STORAGE_KEY = "ojtOAuthProvider";
+const OAUTH_PROVIDER_GOOGLE = "google";
+const OAUTH_PROVIDER_OUTLOOK = "azure";
 const BACKEND_WARMUP_TIMEOUT_MS = 6000;
 const BACKEND_AUTH_TIMEOUT_MS = 10000;
 const BACKEND_DATA_TIMEOUT_MS = 8000;
@@ -192,6 +195,14 @@ const getCurrentOrigin = () =>
     ? window.location.origin
     : "your deployed domain";
 
+const getOAuthProviderLabel = (provider) =>
+  provider === OAUTH_PROVIDER_OUTLOOK ? "Outlook" : "Google";
+
+const normalizeOAuthProvider = (value) => {
+  if (value === OAUTH_PROVIDER_OUTLOOK) return OAUTH_PROVIDER_OUTLOOK;
+  return OAUTH_PROVIDER_GOOGLE;
+};
+
 const withTimeout = async (promise, ms, timeoutMessage) => {
   let timerId;
   try {
@@ -235,6 +246,22 @@ const clearOAuthParamsFromUrl = () => {
   } catch {
     // ignore URL cleanup failures
   }
+};
+
+const getPendingOAuthProvider = () => {
+  if (typeof window === "undefined") return OAUTH_PROVIDER_GOOGLE;
+  const stored = window.localStorage.getItem(OAUTH_PROVIDER_STORAGE_KEY) || "";
+  return normalizeOAuthProvider(stored);
+};
+
+const setPendingOAuthProvider = (provider) => {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(OAUTH_PROVIDER_STORAGE_KEY, normalizeOAuthProvider(provider));
+};
+
+const clearPendingOAuthProvider = () => {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(OAUTH_PROVIDER_STORAGE_KEY);
 };
 
 export default function App() {
@@ -379,7 +406,8 @@ export default function App() {
     }));
   }, [authUser]);
 
-  const handleGoogleAuthError = async (authError) => {
+  const handleOAuthAuthError = async (authError, oauthProvider = OAUTH_PROVIDER_GOOGLE) => {
+    const providerLabel = getOAuthProviderLabel(oauthProvider);
     const backendMessage = getGoogleAuthErrorText(authError);
 
     if (isStaleSupabaseSessionError(backendMessage) || isStaleSupabaseSessionError(authError?.message)) {
@@ -394,7 +422,7 @@ export default function App() {
 
       persistAuth("", null);
       setError(
-        "Google session expired or mismatched. Please click Continue with Google again to start a fresh sign in."
+        `${providerLabel} session expired or mismatched. Please click Continue with ${providerLabel} again to start a fresh sign in.`
       );
       return;
     }
@@ -402,37 +430,37 @@ export default function App() {
     if (backendMessage) {
       if (isRedirectConfigError(backendMessage)) {
         setError(
-          `Google sign in redirect is not allowed. In Supabase Auth URL Configuration, add ${getCurrentOrigin()} to Redirect URLs, then retry login.`
+          `${providerLabel} sign in redirect is not allowed. In Supabase Auth URL Configuration, add ${getCurrentOrigin()} to Redirect URLs, then retry login.`
         );
       } else if (String(backendMessage).toLowerCase().includes("oauth")) {
-        setError(`Google sign in failed: ${backendMessage}`);
+        setError(`${providerLabel} sign in failed: ${backendMessage}`);
       } else if (String(backendMessage).toLowerCase().includes("site can't be reached")) {
         setError(
-          "Google sign in redirect failed to open. Ensure Supabase redirect URLs include your Vercel URL (not localhost)."
+          `${providerLabel} sign in redirect failed to open. Ensure Supabase redirect URLs include your Vercel URL (not localhost).`
         );
       } else
       if (String(backendMessage).toLowerCase().includes("the page could not be found")) {
         setError(
-          "Google sign in failed: API route not found. If you are not using direct mode, set VITE_API_URL to your backend base URL and verify /api/health works."
+          `${providerLabel} sign in failed: API route not found. If you are not using direct mode, set VITE_API_URL to your backend base URL and verify /api/health works.`
         );
       } else if (isNetworkLikeError(backendMessage)) {
         setError(
-          "Google sign in failed: backend is temporarily unreachable (often a cold start). Wait a few seconds and try again."
+          `${providerLabel} sign in failed: backend is temporarily unreachable (often a cold start). Wait a few seconds and try again.`
         );
       } else {
-        setError(`Google sign in failed: ${backendMessage}`);
+        setError(`${providerLabel} sign in failed: ${backendMessage}`);
       }
     } else if (!authError?.response) {
       if (useDirectSupabase) {
         if (String(authError?.message || "").toLowerCase().includes("timed out")) {
           setError(
-            "Google sign in timed out while waiting for Supabase. Please retry, then check internet stability."
+            `${providerLabel} sign in timed out while waiting for Supabase. Please retry, then check internet stability.`
           );
           return;
         }
 
         setError(
-          "Google sign in failed due to network issues. Please check your internet and try again."
+          `${providerLabel} sign in failed due to network issues. Please check your internet and try again.`
         );
         return;
       }
@@ -443,22 +471,22 @@ export default function App() {
           validateStatus: () => true,
         });
         const fallbackText =
-          getGoogleAuthErrorText(authError) || "Network or popup error during Google authentication.";
+          getGoogleAuthErrorText(authError) || "Network or popup error during OAuth authentication.";
         if (isNetworkLikeError(fallbackText)) {
           setError(
-            "Google sign in failed: backend is waking up (cold start). Please try again in 10-30 seconds."
+            `${providerLabel} sign in failed: backend is waking up (cold start). Please try again in 10-30 seconds.`
           );
         } else {
-          setError(`Google sign in failed: ${fallbackText}`);
+          setError(`${providerLabel} sign in failed: ${fallbackText}`);
         }
       } catch {
         setError(
-          "Google sign in failed: API is unreachable. Enable direct mode with VITE_USE_SUPABASE_DIRECT=true or set a reachable VITE_API_URL."
+          `${providerLabel} sign in failed: API is unreachable. Enable direct mode with VITE_USE_SUPABASE_DIRECT=true or set a reachable VITE_API_URL.`
         );
       }
     } else {
       setError(
-        `Google sign in failed: ${
+        `${providerLabel} sign in failed: ${
           getGoogleAuthErrorText(authError) || "Unknown error"
         }`
       );
@@ -494,17 +522,27 @@ export default function App() {
     return false;
   };
 
-  const completeGoogleBackendAuth = async (supabaseAccessToken) => {
+  const completeOAuthBackendAuth = async (
+    supabaseAccessToken,
+    oauthProvider = OAUTH_PROVIDER_GOOGLE
+  ) => {
     if (!supabaseAccessToken) {
       throw new Error("Missing Supabase access token");
     }
 
-    if (useDirectSupabase) {
+    const isGoogleProvider = oauthProvider === OAUTH_PROVIDER_GOOGLE;
+
+    if (useDirectSupabase || !isGoogleProvider) {
       const directAuth = await withTimeout(
-        directGoogleAuth(supabaseAccessToken),
+        directGoogleAuth(supabaseAccessToken, oauthProvider),
         DIRECT_AUTH_TIMEOUT_MS,
-        "Google sign in timed out while contacting Supabase. Please try again."
+        `${getOAuthProviderLabel(oauthProvider)} sign in timed out while contacting Supabase. Please try again.`
       );
+
+      if (!useDirectSupabase) {
+        setUseDirectSupabase(true);
+      }
+
       persistAuth(directAuth.token, directAuth.user);
       return;
     }
@@ -587,15 +625,18 @@ export default function App() {
         const accessToken = sessionData?.session?.access_token;
         if (!accessToken || cancelled) return;
 
+        const oauthProvider = getPendingOAuthProvider();
+
         setGoogleLoading(true);
-        await completeGoogleBackendAuth(accessToken);
+        await completeOAuthBackendAuth(accessToken, oauthProvider);
         if (!cancelled) {
           setError("");
+          clearPendingOAuthProvider();
           clearOAuthParamsFromUrl();
         }
       } catch (authError) {
         if (!cancelled) {
-          await handleGoogleAuthError(authError);
+          await handleOAuthAuthError(authError, getPendingOAuthProvider());
         }
       } finally {
         if (!cancelled) {
@@ -614,13 +655,16 @@ export default function App() {
       const accessToken = session?.access_token;
       if (!accessToken || authToken) return;
 
+      const oauthProvider = getPendingOAuthProvider();
+
       setGoogleLoading(true);
       try {
-        await completeGoogleBackendAuth(accessToken);
+        await completeOAuthBackendAuth(accessToken, oauthProvider);
         if (!cancelled) setError("");
+        clearPendingOAuthProvider();
       } catch (authError) {
         if (!cancelled) {
-          await handleGoogleAuthError(authError);
+          await handleOAuthAuthError(authError, oauthProvider);
         }
       } finally {
         if (!cancelled) {
@@ -647,10 +691,10 @@ export default function App() {
     const raw = decodeURIComponent(oauthDescription || oauthError).replace(/\+/g, " ");
     if (isRedirectConfigError(raw)) {
       setError(
-        `Google sign in redirect is not allowed. Add ${getCurrentOrigin()} to Supabase Redirect URLs and try again.`
+        `OAuth sign in redirect is not allowed. Add ${getCurrentOrigin()} to Supabase Redirect URLs and try again.`
       );
     } else {
-      setError(`Google sign in failed: ${raw}`);
+      setError(`OAuth sign in failed: ${raw}`);
     }
 
     clearOAuthParamsFromUrl();
@@ -839,10 +883,11 @@ export default function App() {
 
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
-    // Traditional auth removed - only Google sign-in is used
+    // Traditional auth removed - OAuth sign-in is used
   };
 
-  const handleGoogleSignIn = async () => {
+  const handleOAuthSignIn = async (oauthProvider = OAUTH_PROVIDER_GOOGLE) => {
+    const providerLabel = getOAuthProviderLabel(oauthProvider);
     setError("");
     setGoogleLoading(true);
 
@@ -859,21 +904,21 @@ export default function App() {
       if (!shouldUseDirectNow) {
         if (hasMissingHostedApiUrl) {
           setError(
-            "Google sign in API URL is missing. Set VITE_API_URL or enable VITE_USE_SUPABASE_DIRECT=true."
+            `${providerLabel} sign in API URL is missing. Set VITE_API_URL or enable VITE_USE_SUPABASE_DIRECT=true.`
           );
           return;
         }
 
         if (hasHostedLocalApiUrl) {
           setError(
-            `Google sign in API URL is localhost (${configuredApiUrl}). Use a public API URL or enable VITE_USE_SUPABASE_DIRECT=true.`
+            `${providerLabel} sign in API URL is localhost (${configuredApiUrl}). Use a public API URL or enable VITE_USE_SUPABASE_DIRECT=true.`
           );
           return;
         }
 
         if (hasPlaceholderApiUrl) {
           setError(
-            `Google sign in API URL is still placeholder. Current VITE_API_URL: ${configuredApiUrl || "(empty)"}. Set a real API URL or enable VITE_USE_SUPABASE_DIRECT=true.`
+            `${providerLabel} sign in API URL is still placeholder. Current VITE_API_URL: ${configuredApiUrl || "(empty)"}. Set a real API URL or enable VITE_USE_SUPABASE_DIRECT=true.`
           );
           return;
         }
@@ -881,7 +926,7 @@ export default function App() {
 
       if (!isSupabaseConfigured) {
         setError(
-          "Google sign in is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your frontend environment and redeploy."
+          `${providerLabel} sign in is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your frontend environment and redeploy.`
         );
         return;
       }
@@ -889,7 +934,7 @@ export default function App() {
       const supabase = getSupabaseClient();
       if (!supabase) {
         setError(
-          "Google sign in is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your frontend environment and redeploy."
+          `${providerLabel} sign in is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your frontend environment and redeploy.`
         );
         return;
       }
@@ -900,11 +945,13 @@ export default function App() {
           : undefined;
 
       if (!redirectTo) {
-        throw new Error("Unable to determine redirect URL for Google sign in.");
+        throw new Error(`Unable to determine redirect URL for ${providerLabel} sign in.`);
       }
 
+      setPendingOAuthProvider(oauthProvider);
+
       const signInPromise = supabase.auth.signInWithOAuth({
-        provider: "google",
+        provider: oauthProvider,
         options: {
           redirectTo,
           queryParams: { prompt: "select_account" },
@@ -913,7 +960,7 @@ export default function App() {
 
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
-          reject(new Error("Google sign in is taking too long to start. If this is mobile, check Supabase redirect URLs for your Vercel domain."));
+          reject(new Error(`${providerLabel} sign in is taking too long to start. If this is mobile, check Supabase redirect URLs for your Vercel domain.`));
         }, OAUTH_INIT_TIMEOUT_MS);
       });
 
@@ -923,10 +970,18 @@ export default function App() {
         throw oauthError;
       }
     } catch (authError) {
-      await handleGoogleAuthError(authError);
+      await handleOAuthAuthError(authError, oauthProvider);
     } finally {
       setGoogleLoading(false);
     }
+  };
+
+  const handleGoogleSignIn = async () => {
+    await handleOAuthSignIn(OAUTH_PROVIDER_GOOGLE);
+  };
+
+  const handleOutlookSignIn = async () => {
+    await handleOAuthSignIn(OAUTH_PROVIDER_OUTLOOK);
   };
 
   const requestLogout = () => {
@@ -1934,7 +1989,7 @@ export default function App() {
               <div className="w-full max-w-sm bg-white rounded-2xl shadow-lg border border-blue-100 p-8">
                 <div className="mb-8">
                   <h2 className="text-2xl font-bold text-slate-900 mb-2">Get Started</h2>
-                  <p className="text-slate-600 text-sm">Sign in with Google to begin</p>
+                  <p className="text-slate-600 text-sm">Sign in with Google or Outlook to begin</p>
                 </div>
 
                 {error ? (
@@ -1970,12 +2025,27 @@ export default function App() {
                   {googleLoading ? "Signing in..." : "Continue with Google"}
                 </button>
 
+                <button
+                  type="button"
+                  onClick={handleOutlookSignIn}
+                  disabled={googleLoading}
+                  className="w-full flex items-center justify-center gap-3 bg-linear-to-r from-slate-50 to-slate-100 border-2 border-slate-200 hover:border-slate-400 hover:from-slate-100 hover:to-slate-150 rounded-lg px-4 py-3 font-semibold text-slate-800 transition-all disabled:opacity-60 mb-8"
+                >
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="2" y="3" width="9" height="9" fill="#F35325"/>
+                    <rect x="13" y="3" width="9" height="9" fill="#81BC06"/>
+                    <rect x="2" y="13" width="9" height="9" fill="#05A6F0"/>
+                    <rect x="13" y="13" width="9" height="9" fill="#FFBA08"/>
+                  </svg>
+                  {googleLoading ? "Signing in..." : "Continue with Outlook"}
+                </button>
+
                 <div className="space-y-2 text-xs text-slate-600">
                   <div className="flex items-center gap-2">
                     <svg className="w-4 h-4 text-green-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                     </svg>
-                    <span>Secure Google Authentication</span>
+                    <span>Secure OAuth Authentication</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <svg className="w-4 h-4 text-green-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
