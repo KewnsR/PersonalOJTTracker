@@ -33,7 +33,9 @@ const AUTH_USER_STORAGE_KEY = "ojtAuthUser";
 const LAST_AUTH_USER_ID_STORAGE_KEY = "ojtLastAuthUserId";
 const OAUTH_PROVIDER_STORAGE_KEY = "ojtOAuthProvider";
 const OAUTH_PROVIDER_GOOGLE = "google";
-const OAUTH_PROVIDER_OUTLOOK = "azure";
+const configuredOAuthRedirectUrl = String(import.meta.env.VITE_OAUTH_REDIRECT_URL || "")
+  .trim()
+  .replace(/\/+$/, "");
 const BACKEND_WARMUP_TIMEOUT_MS = 6000;
 const BACKEND_AUTH_TIMEOUT_MS = 10000;
 const BACKEND_DATA_TIMEOUT_MS = 8000;
@@ -195,13 +197,9 @@ const getCurrentOrigin = () =>
     ? window.location.origin
     : "your deployed domain";
 
-const getOAuthProviderLabel = (provider) =>
-  provider === OAUTH_PROVIDER_OUTLOOK ? "Outlook" : "Google";
+const getOAuthProviderLabel = () => "Google";
 
-const normalizeOAuthProvider = (value) => {
-  if (value === OAUTH_PROVIDER_OUTLOOK) return OAUTH_PROVIDER_OUTLOOK;
-  return OAUTH_PROVIDER_GOOGLE;
-};
+const normalizeOAuthProvider = () => OAUTH_PROVIDER_GOOGLE;
 
 const withTimeout = async (promise, ms, timeoutMessage) => {
   let timerId;
@@ -939,10 +937,11 @@ export default function App() {
         return;
       }
 
-      const redirectTo =
+      const runtimeOrigin =
         typeof window !== "undefined"
           ? window.location.origin
-          : undefined;
+          : "";
+      const redirectTo = configuredOAuthRedirectUrl || runtimeOrigin;
 
       if (!redirectTo) {
         throw new Error(`Unable to determine redirect URL for ${providerLabel} sign in.`);
@@ -978,10 +977,6 @@ export default function App() {
 
   const handleGoogleSignIn = async () => {
     await handleOAuthSignIn(OAUTH_PROVIDER_GOOGLE);
-  };
-
-  const handleOutlookSignIn = async () => {
-    await handleOAuthSignIn(OAUTH_PROVIDER_OUTLOOK);
   };
 
   const requestLogout = () => {
@@ -1989,7 +1984,7 @@ export default function App() {
               <div className="w-full max-w-sm bg-white rounded-2xl shadow-lg border border-blue-100 p-8">
                 <div className="mb-8">
                   <h2 className="text-2xl font-bold text-slate-900 mb-2">Get Started</h2>
-                  <p className="text-slate-600 text-sm">Sign in with Google or Outlook to begin</p>
+                  <p className="text-slate-600 text-sm">Sign in with Google to begin</p>
                 </div>
 
                 {error ? (
@@ -2004,7 +1999,7 @@ export default function App() {
                   disabled={googleLoading}
                   className="w-full flex items-center justify-center gap-3 bg-linear-to-r from-blue-50 to-blue-100 border-2 border-blue-200 hover:border-blue-400 hover:from-blue-100 hover:to-blue-150 rounded-lg px-4 py-3 font-semibold text-slate-800 transition-all disabled:opacity-60 mb-8"
                 >
-                  <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
                     <path
                       fill="#4285F4"
                       d="M23.49 12.27c0-.79-.06-1.36-.19-1.96H12.24v4.2h6.49c-.13 1.04-.83 2.61-2.39 3.66l-.02.14 3.42 2.65.24.02c2.2-2.03 3.51-5.01 3.51-8.71z"
@@ -2023,21 +2018,6 @@ export default function App() {
                     />
                   </svg>
                   {googleLoading ? "Signing in..." : "Continue with Google"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleOutlookSignIn}
-                  disabled={googleLoading}
-                  className="w-full flex items-center justify-center gap-3 bg-linear-to-r from-slate-50 to-slate-100 border-2 border-slate-200 hover:border-slate-400 hover:from-slate-100 hover:to-slate-150 rounded-lg px-4 py-3 font-semibold text-slate-800 transition-all disabled:opacity-60 mb-8"
-                >
-                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect x="2" y="3" width="9" height="9" fill="#F35325"/>
-                    <rect x="13" y="3" width="9" height="9" fill="#81BC06"/>
-                    <rect x="2" y="13" width="9" height="9" fill="#05A6F0"/>
-                    <rect x="13" y="13" width="9" height="9" fill="#FFBA08"/>
-                  </svg>
-                  {googleLoading ? "Signing in..." : "Continue with Outlook"}
                 </button>
 
                 <div className="space-y-2 text-xs text-slate-600">
