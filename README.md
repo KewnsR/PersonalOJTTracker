@@ -38,6 +38,19 @@ Create a `.env` file for local use:
 - `npm run build`
 - `npm run preview`
 
+## Docker (Local Development)
+1. Build and start the app in Docker:
+   - `docker compose up --build`
+2. Open the app:
+   - `http://localhost:5173`
+3. Stop containers:
+   - `docker compose down`
+
+Notes:
+- This setup runs Vite dev server in a container with hot reload.
+- Your local project folder is mounted into the container.
+- If needed, keep your `.env` in the project root for Vite env variables.
+
 ## Deployment (Vercel + Supabase only)
 - Set `VITE_USE_SUPABASE_DIRECT=true` in Vercel environment variables.
 - Google login and data operations run directly against Supabase from the frontend.
