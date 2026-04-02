@@ -1949,8 +1949,23 @@ export default function App() {
                   disabled={googleLoading}
                   className="w-full flex items-center justify-center gap-3 bg-linear-to-r from-blue-50 to-blue-100 border-2 border-blue-200 hover:border-blue-400 hover:from-blue-100 hover:to-blue-150 rounded-lg px-4 py-3 font-semibold text-slate-800 transition-all disabled:opacity-60 mb-8"
                 >
-                  <svg className="w-5 h-5" viewBox="0 0 24 24">
-                    <path fill="currentColor" d="M12.545,10.239v3.821h5.445c-0.712,2.315-2.647,3.972-5.445,3.972c-3.332,0-6.033-2.701-6.033-6.032 c0-3.331,2.701-6.032,6.033-6.032c1.498,0,2.866,0.549,3.921,1.453l2.814-2.814C17.461,2.268,15.365,1.5,12.545,1.5 c-6.135,0-11.108,4.992-11.108,11.032c0,6.041,4.973,11.032,11.108,11.032c3.079,0,5.87-1.313,7.8-3.457l0.529,-0.528 v-2.2h-8.231V10.239z"/>
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      fill="#4285F4"
+                      d="M23.49 12.27c0-.79-.06-1.36-.19-1.96H12.24v4.2h6.49c-.13 1.04-.83 2.61-2.39 3.66l-.02.14 3.42 2.65.24.02c2.2-2.03 3.51-5.01 3.51-8.71z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12.24 23.75c3.18 0 5.84-1.05 7.79-2.86l-3.71-2.87c-.99.69-2.32 1.17-4.08 1.17-3.12 0-5.77-2.03-6.7-4.85l-.13.01-3.56 2.75-.04.12c1.95 3.88 5.97 6.53 10.43 6.53z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.54 14.34a7.14 7.14 0 01-.39-2.34c0-.81.14-1.59.37-2.34l-.01-.16-3.61-2.79-.12.06A11.49 11.49 0 00.5 12c0 1.85.45 3.6 1.28 5.23z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12.24 4.81c2.22 0 3.71.96 4.56 1.76l3.33-3.25C18.07 1.4 15.42.25 12.24.25 7.78.25 3.76 2.9 1.81 6.78l3.74 2.9c.95-2.82 3.6-4.87 6.69-4.87z"
+                    />
                   </svg>
                   {googleLoading ? "Signing in..." : "Continue with Google"}
                 </button>

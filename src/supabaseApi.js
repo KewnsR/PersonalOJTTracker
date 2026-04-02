@@ -104,7 +104,7 @@ export const directGoogleAuth = async (supabaseAccessToken) => {
   const { data: existingUserByEmail, error: userByEmailFetchError } = await supabase
     .from("users")
     .select("id,name,email,username")
-    .eq("email", email)
+    .ilike("email", email)
     .maybeSingle();
 
   if (userByEmailFetchError) {
@@ -124,11 +124,51 @@ export const directGoogleAuth = async (supabaseAccessToken) => {
     updated_at: now,
   };
 
-  const { data: upsertedUser, error: upsertUserError } = await supabase
+  let { data: upsertedUser, error: upsertUserError } = await supabase
     .from("users")
     .upsert(userPayload, { onConflict: "id" })
     .select("id,name,email,username")
     .single();
+
+  // If a legacy row exists under the same email, recover by reading that row.
+  if (upsertUserError?.code === "23505" && upsertUserError?.message?.includes("users_email_key")) {
+    const { data: userByEmailAfterConflict, error: refetchByEmailError } = await supabase
+      .from("users")
+      .select("id,name,email,username")
+      .ilike("email", email)
+      .maybeSingle();
+
+    if (refetchByEmailError) {
+      throw refetchByEmailError;
+    }
+
+    if (userByEmailAfterConflict) {
+      upsertedUser = userByEmailAfterConflict;
+      upsertUserError = null;
+    } else {
+      // Last-resort retry: target conflict by email and avoid overriding the row id.
+      const userPayloadByEmail = {
+        name,
+        email,
+        username: fallbackUsername,
+        auth_provider: "google",
+        updated_at: now,
+      };
+
+      const { data: upsertedByEmail, error: upsertByEmailError } = await supabase
+        .from("users")
+        .upsert(userPayloadByEmail, { onConflict: "email" })
+        .select("id,name,email,username")
+        .single();
+
+      if (upsertByEmailError) {
+        throw upsertByEmailError;
+      }
+
+      upsertedUser = upsertedByEmail;
+      upsertUserError = null;
+    }
+  }
 
   if (upsertUserError) {
     throw upsertUserError;
