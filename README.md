@@ -15,7 +15,7 @@ It is built for simple progress tracking during internship or on-the-job trainin
 
 ## Tech Stack
 - React + Vite
-- Supabase (database + Google/Outlook OAuth)
+- Supabase (database + Google OAuth)
 
 ## Quick Start
 1. Install dependencies:
@@ -65,7 +65,3 @@ Notes:
 - Set `VITE_USE_SUPABASE_DIRECT=true` in Vercel environment variables.
 - Google login and data operations run directly against Supabase from the frontend.
 
-## Troubleshooting
-- Google login redirect mismatch: verify `VITE_OAUTH_REDIRECT_URL` and the authorized redirect URLs in Supabase/Google settings.
-- App cannot load data: check `.env` values and confirm `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are valid.
-- If you use backend mode, make sure `VITE_API_URL` points to a reachable API base URL.
