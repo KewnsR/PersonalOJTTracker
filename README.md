@@ -54,6 +54,10 @@ Create a `.env` file for local use:
 - In Supabase: `Authentication -> Email Templates -> Magic Link`.
 - Keep a clear CTA to click the sign-in link and mention this is for OJT Tracker login.
 - Include support text like: "If you did not request this email, ignore it."
+- Suggested short copy:
+   - Subject: `Sign in to OJT Tracker`
+   - Body: `You requested to sign in to OJT Tracker. Please use the secure link below to continue.`
+   - Footer: `If you did not request this email, you may safely ignore it.`
 
 ## Docker (Local Development)
 1. Build and start the app in Docker:

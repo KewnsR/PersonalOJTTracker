@@ -1074,7 +1074,7 @@ export default function App() {
       setEmailAuthForm((prev) => ({ ...prev, email }));
       setEmailOtpCooldownUntil(Date.now() + EMAIL_OTP_RESEND_COOLDOWN_SECONDS * 1000);
       setAuthNotice(
-        `Sign-in link sent to ${email}. Open your email and click the link to continue. If it does not appear, check spam/junk and wait a minute before resending.`
+        `Sign-in link sent to ${email}. Please check your inbox or spam folder.`
       );
     } catch (authError) {
       const authMessage = getGoogleAuthErrorText(authError) || "Unknown error";
