@@ -10,7 +10,7 @@ It is built for simple progress tracking during internship or on-the-job trainin
 - Track daily attendance with time in/out and notes.
 - Monitor total completed OJT hours and progress trends.
 - Manage weekly reports in one place.
-- Authenticate users with Google OAuth or email verification code.
+- Authenticate users with Google OAuth or email magic-link sign-in.
 - Store and load data from Supabase.
 
 ## Tech Stack
@@ -47,13 +47,13 @@ Create a `.env` file for local use:
 
 ## Authentication
 - Google OAuth sign-in is supported.
-- Email verification-code sign-in (OTP) is supported and works with Outlook email addresses.
+- Email magic-link sign-in is supported and works with Outlook email addresses.
 - Legacy backend email/password endpoints remain disabled by design.
 
-## OTP Email Template (Important)
+## Magic Link Email Template (Recommended)
 - In Supabase: `Authentication -> Email Templates -> Magic Link`.
-- Ensure the template body includes `{{ .Token }}` so users can see the verification code.
-- If the email currently shows only a clickable confirmation link, edit the template to show the token and remove link-only wording.
+- Keep a clear CTA to click the sign-in link and mention this is for OJT Tracker login.
+- Include support text like: "If you did not request this email, ignore it."
 
 ## Docker (Local Development)
 1. Build and start the app in Docker:

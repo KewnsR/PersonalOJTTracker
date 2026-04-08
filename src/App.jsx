@@ -287,7 +287,7 @@ export default function App() {
   const [useDirectSupabase, setUseDirectSupabase] = useState(DEFAULT_DIRECT_SUPABASE_MODE);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [emailAuthLoading, setEmailAuthLoading] = useState(false);
-  const [emailAuthForm, setEmailAuthForm] = useState({ email: "", code: "" });
+  const [emailAuthForm, setEmailAuthForm] = useState({ email: "" });
   const [emailOtpCooldownUntil, setEmailOtpCooldownUntil] = useState(0);
   const [emailOtpTick, setEmailOtpTick] = useState(0);
   const [authNotice, setAuthNotice] = useState("");
@@ -1023,7 +1023,7 @@ export default function App() {
 
     if (emailOtpCooldownSecondsLeft > 0) {
       setError(
-        `Please wait ${emailOtpCooldownSecondsLeft}s before requesting another verification code.`
+        `Please wait ${emailOtpCooldownSecondsLeft}s before requesting another sign-in link.`
       );
       setAuthNotice("");
       return;
@@ -1036,17 +1036,23 @@ export default function App() {
     }
 
     if (!isSupabaseConfigured) {
-      setError("Email code sign-in is not configured. Add Supabase frontend env vars first.");
+      setError("Email sign-in link is not configured. Add Supabase frontend env vars first.");
       setAuthNotice("");
       return;
     }
 
     const supabase = getSupabaseClient();
     if (!supabase) {
-      setError("Email code sign-in is unavailable because Supabase client is not configured.");
+      setError("Email sign-in link is unavailable because Supabase client is not configured.");
       setAuthNotice("");
       return;
     }
+
+    const runtimeOrigin =
+      typeof window !== "undefined"
+        ? window.location.origin
+        : "";
+    const emailRedirectTo = configuredOAuthRedirectUrl || runtimeOrigin || undefined;
 
     setEmailAuthLoading(true);
     setError("");
@@ -1057,6 +1063,7 @@ export default function App() {
         email,
         options: {
           shouldCreateUser: true,
+          emailRedirectTo,
         },
       });
 
@@ -1066,73 +1073,20 @@ export default function App() {
 
       setEmailAuthForm((prev) => ({ ...prev, email }));
       setEmailOtpCooldownUntil(Date.now() + EMAIL_OTP_RESEND_COOLDOWN_SECONDS * 1000);
-      setAuthNotice(`Verification code sent to ${email}. Check your inbox (including spam).`);
+      setAuthNotice(
+        `Sign-in link sent to ${email}. Open your email and click the link to continue. If it does not appear, check spam/junk and wait a minute before resending.`
+      );
     } catch (authError) {
       const authMessage = getGoogleAuthErrorText(authError) || "Unknown error";
       if (String(authMessage).toLowerCase().includes("rate limit")) {
         setEmailOtpCooldownUntil(Date.now() + EMAIL_OTP_RESEND_COOLDOWN_SECONDS * 1000);
         setError(
-          `Email code sign in failed: email rate limit exceeded. Please wait ${EMAIL_OTP_RESEND_COOLDOWN_SECONDS}s and try again.`
+          `Email sign in failed: email rate limit exceeded. Please wait ${EMAIL_OTP_RESEND_COOLDOWN_SECONDS}s and try again.`
         );
       } else {
-        setError(`Email code sign in failed: ${authMessage}`);
+        setError(`Email sign in failed: ${authMessage}`);
       }
       setAuthNotice("");
-    } finally {
-      setEmailAuthLoading(false);
-    }
-  };
-
-  const handleVerifyEmailCode = async (e) => {
-    e.preventDefault();
-
-    const email = String(emailAuthForm.email || "").trim().toLowerCase();
-    const token = String(emailAuthForm.code || "").trim();
-
-    if (!isValidEmail(email)) {
-      setError("Enter a valid email address before verifying your code.");
-      setAuthNotice("");
-      return;
-    }
-
-    if (!token) {
-      setError("Enter the verification code from your email.");
-      setAuthNotice("");
-      return;
-    }
-
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      setError("Email code sign-in is unavailable because Supabase client is not configured.");
-      setAuthNotice("");
-      return;
-    }
-
-    setEmailAuthLoading(true);
-    setError("");
-    setAuthNotice("");
-
-    try {
-      const { data, error: verifyError } = await supabase.auth.verifyOtp({
-        email,
-        token,
-        type: "email",
-      });
-
-      if (verifyError) {
-        throw verifyError;
-      }
-
-      const accessToken = data?.session?.access_token;
-      if (!accessToken) {
-        throw new Error("No session returned after verifying code. Please request a new code.");
-      }
-
-      await completeOAuthBackendAuth(accessToken, OAUTH_PROVIDER_EMAIL);
-      setEmailAuthForm({ email, code: "" });
-      setAuthNotice("Email sign in successful.");
-    } catch (authError) {
-      await handleOAuthAuthError(authError, OAUTH_PROVIDER_EMAIL);
     } finally {
       setEmailAuthLoading(false);
     }
@@ -2061,7 +2015,7 @@ export default function App() {
             <div className="mb-7 text-center">
               <p className="text-sm font-semibold tracking-[0.22em] text-cyan-700">OJT TRACKER</p>
               <h1 className="mt-2 text-2xl font-black text-slate-900 sm:text-3xl">Sign In</h1>
-              <p className="mt-2 text-sm text-slate-600">Use Google or email verification code.</p>
+              <p className="mt-2 text-sm text-slate-600">Use Google or an email sign-in link.</p>
             </div>
 
             {error ? (
@@ -2109,7 +2063,7 @@ export default function App() {
               <div className="h-px flex-1 bg-slate-300" />
             </div>
 
-            <form onSubmit={handleVerifyEmailCode} className="space-y-3">
+            <div className="space-y-3">
               <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Email (Outlook supported)
               </label>
@@ -2131,34 +2085,15 @@ export default function App() {
                 className="w-full rounded-xl border border-blue-300 bg-blue-50 px-3 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-60"
               >
                 {emailAuthLoading
-                  ? "Sending code..."
+                  ? "Sending sign-in link..."
                   : emailOtpCooldownSecondsLeft > 0
                     ? `Resend in ${emailOtpCooldownSecondsLeft}s`
-                    : "Send verification code"}
+                    : "Send sign-in link"}
               </button>
-
-              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Verification code
-              </label>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={emailAuthForm.code}
-                onChange={(e) =>
-                  setEmailAuthForm((prev) => ({ ...prev, code: e.target.value }))
-                }
-                placeholder="Enter code from email"
-                className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none"
-                disabled={emailAuthLoading || googleLoading}
-              />
-              <button
-                type="submit"
-                disabled={emailAuthLoading || googleLoading}
-                className="w-full rounded-xl bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
-              >
-                {emailAuthLoading ? "Verifying..." : "Verify code and sign in"}
-              </button>
-            </form>
+              <p className="text-xs text-slate-500">
+                After clicking the email link, you will be redirected back and signed in automatically.
+              </p>
+            </div>
           </motion.div>
         </div>
       </div>
