@@ -33,6 +33,7 @@ const AUTH_USER_STORAGE_KEY = "ojtAuthUser";
 const LAST_AUTH_USER_ID_STORAGE_KEY = "ojtLastAuthUserId";
 const OAUTH_PROVIDER_STORAGE_KEY = "ojtOAuthProvider";
 const OAUTH_PROVIDER_GOOGLE = "google";
+const OAUTH_PROVIDER_EMAIL = "email";
 const configuredOAuthRedirectUrl = String(import.meta.env.VITE_OAUTH_REDIRECT_URL || "")
   .trim()
   .replace(/\/+$/, "");
@@ -45,6 +46,7 @@ const BACKEND_READY_MAX_CHECKS = 4;
 const OAUTH_INIT_TIMEOUT_MS = 12000;
 const DIRECT_AUTH_TIMEOUT_MS = 15000;
 const DIRECT_DATA_TIMEOUT_MS = 15000;
+const EMAIL_OTP_RESEND_COOLDOWN_SECONDS = 60;
 const DEFAULT_REQUIRED_OJT_HOURS = 600;
 const DEFAULT_THEME_MODE = "light";
 const HALFDAY_BREAK_MINUTES = 30;
@@ -197,9 +199,23 @@ const getCurrentOrigin = () =>
     ? window.location.origin
     : "your deployed domain";
 
-const getOAuthProviderLabel = () => "Google";
+const getOAuthProviderLabel = (provider = OAUTH_PROVIDER_GOOGLE) => {
+  const normalized = String(provider || "").trim().toLowerCase();
+  if (normalized === OAUTH_PROVIDER_EMAIL) {
+    return "Email code";
+  }
+  return "Google";
+};
 
-const normalizeOAuthProvider = () => OAUTH_PROVIDER_GOOGLE;
+const normalizeOAuthProvider = (provider = OAUTH_PROVIDER_GOOGLE) => {
+  const normalized = String(provider || "").trim().toLowerCase();
+  if (normalized === OAUTH_PROVIDER_EMAIL || normalized === "otp") {
+    return OAUTH_PROVIDER_EMAIL;
+  }
+  return OAUTH_PROVIDER_GOOGLE;
+};
+
+const isValidEmail = (value) => /.+@.+\..+/.test(String(value || "").trim());
 
 const withTimeout = async (promise, ms, timeoutMessage) => {
   let timerId;
@@ -270,6 +286,11 @@ export default function App() {
   });
   const [useDirectSupabase, setUseDirectSupabase] = useState(DEFAULT_DIRECT_SUPABASE_MODE);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [emailAuthLoading, setEmailAuthLoading] = useState(false);
+  const [emailAuthForm, setEmailAuthForm] = useState({ email: "", code: "" });
+  const [emailOtpCooldownUntil, setEmailOtpCooldownUntil] = useState(0);
+  const [emailOtpTick, setEmailOtpTick] = useState(0);
+  const [authNotice, setAuthNotice] = useState("");
   const [showLoginSplash, setShowLoginSplash] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [entries, setEntries] = useState([]);
@@ -329,6 +350,21 @@ export default function App() {
   const [journalEditForm, setJournalEditForm] = useState({ from: "", to: "", note: "" });
   const [journalDeleteTarget, setJournalDeleteTarget] = useState(null);
   const [entryDeleteTarget, setEntryDeleteTarget] = useState(null);
+
+  const emailOtpCooldownSecondsLeft = Math.max(
+    0,
+    Math.ceil((emailOtpCooldownUntil - (emailOtpTick || Date.now())) / 1000)
+  );
+
+  useEffect(() => {
+    if (emailOtpCooldownSecondsLeft <= 0) return undefined;
+
+    const intervalId = setInterval(() => {
+      setEmailOtpTick(Date.now());
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [emailOtpCooldownSecondsLeft]);
 
   const applyAuthHeader = (token) => {
     if (useDirectSupabase) {
@@ -407,6 +443,7 @@ export default function App() {
   const handleOAuthAuthError = async (authError, oauthProvider = OAUTH_PROVIDER_GOOGLE) => {
     const providerLabel = getOAuthProviderLabel(oauthProvider);
     const backendMessage = getGoogleAuthErrorText(authError);
+    setAuthNotice("");
 
     if (isStaleSupabaseSessionError(backendMessage) || isStaleSupabaseSessionError(authError?.message)) {
       try {
@@ -885,8 +922,10 @@ export default function App() {
   };
 
   const handleOAuthSignIn = async (oauthProvider = OAUTH_PROVIDER_GOOGLE) => {
-    const providerLabel = getOAuthProviderLabel(oauthProvider);
+    const normalizedProvider = normalizeOAuthProvider(oauthProvider);
+    const providerLabel = getOAuthProviderLabel(normalizedProvider);
     setError("");
+    setAuthNotice("");
     setGoogleLoading(true);
 
     try {
@@ -947,10 +986,10 @@ export default function App() {
         throw new Error(`Unable to determine redirect URL for ${providerLabel} sign in.`);
       }
 
-      setPendingOAuthProvider(oauthProvider);
+      setPendingOAuthProvider(normalizedProvider);
 
       const signInPromise = supabase.auth.signInWithOAuth({
-        provider: oauthProvider,
+        provider: normalizedProvider,
         options: {
           redirectTo,
           queryParams: { prompt: "select_account" },
@@ -977,6 +1016,126 @@ export default function App() {
 
   const handleGoogleSignIn = async () => {
     await handleOAuthSignIn(OAUTH_PROVIDER_GOOGLE);
+  };
+
+  const handleSendEmailCode = async () => {
+    const email = String(emailAuthForm.email || "").trim().toLowerCase();
+
+    if (emailOtpCooldownSecondsLeft > 0) {
+      setError(
+        `Please wait ${emailOtpCooldownSecondsLeft}s before requesting another verification code.`
+      );
+      setAuthNotice("");
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      setError("Enter a valid email address to receive your sign-in code.");
+      setAuthNotice("");
+      return;
+    }
+
+    if (!isSupabaseConfigured) {
+      setError("Email code sign-in is not configured. Add Supabase frontend env vars first.");
+      setAuthNotice("");
+      return;
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setError("Email code sign-in is unavailable because Supabase client is not configured.");
+      setAuthNotice("");
+      return;
+    }
+
+    setEmailAuthLoading(true);
+    setError("");
+    setAuthNotice("");
+
+    try {
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          shouldCreateUser: true,
+        },
+      });
+
+      if (otpError) {
+        throw otpError;
+      }
+
+      setEmailAuthForm((prev) => ({ ...prev, email }));
+      setEmailOtpCooldownUntil(Date.now() + EMAIL_OTP_RESEND_COOLDOWN_SECONDS * 1000);
+      setAuthNotice(`Verification code sent to ${email}. Check your inbox (including spam).`);
+    } catch (authError) {
+      const authMessage = getGoogleAuthErrorText(authError) || "Unknown error";
+      if (String(authMessage).toLowerCase().includes("rate limit")) {
+        setEmailOtpCooldownUntil(Date.now() + EMAIL_OTP_RESEND_COOLDOWN_SECONDS * 1000);
+        setError(
+          `Email code sign in failed: email rate limit exceeded. Please wait ${EMAIL_OTP_RESEND_COOLDOWN_SECONDS}s and try again.`
+        );
+      } else {
+        setError(`Email code sign in failed: ${authMessage}`);
+      }
+      setAuthNotice("");
+    } finally {
+      setEmailAuthLoading(false);
+    }
+  };
+
+  const handleVerifyEmailCode = async (e) => {
+    e.preventDefault();
+
+    const email = String(emailAuthForm.email || "").trim().toLowerCase();
+    const token = String(emailAuthForm.code || "").trim();
+
+    if (!isValidEmail(email)) {
+      setError("Enter a valid email address before verifying your code.");
+      setAuthNotice("");
+      return;
+    }
+
+    if (!token) {
+      setError("Enter the verification code from your email.");
+      setAuthNotice("");
+      return;
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setError("Email code sign-in is unavailable because Supabase client is not configured.");
+      setAuthNotice("");
+      return;
+    }
+
+    setEmailAuthLoading(true);
+    setError("");
+    setAuthNotice("");
+
+    try {
+      const { data, error: verifyError } = await supabase.auth.verifyOtp({
+        email,
+        token,
+        type: "email",
+      });
+
+      if (verifyError) {
+        throw verifyError;
+      }
+
+      const accessToken = data?.session?.access_token;
+      if (!accessToken) {
+        throw new Error("No session returned after verifying code. Please request a new code.");
+      }
+
+      await completeOAuthBackendAuth(accessToken, OAUTH_PROVIDER_EMAIL);
+      setEmailAuthForm({ email, code: "" });
+      setAuthNotice("Email sign in successful.");
+    } catch (authError) {
+      await handleOAuthAuthError(authError, OAUTH_PROVIDER_EMAIL);
+    } finally {
+      setEmailAuthLoading(false);
+    }
   };
 
   const requestLogout = () => {
@@ -1887,188 +2046,120 @@ export default function App() {
 
   if (!authToken) {
     return (
-      <div className="min-h-screen bg-linear-to-br from-blue-50 via-slate-50 to-blue-100 flex flex-col">
-        {/* Navigation Bar */}
-        <div className="border-b border-blue-100 bg-white/80 backdrop-blur-sm sticky top-0 z-50">
-          <div className="max-w-7xl mx-auto px-4 md:px-8 py-4 flex items-center justify-between">
-            <div className="text-2xl font-black text-blue-600">OJT Tracker</div>
-            <div className="text-sm text-slate-500">Professional Training Hours Tracking</div>
-          </div>
-        </div>
+      <div className="relative min-h-screen overflow-hidden bg-linear-to-br from-sky-100 via-cyan-50 to-emerald-100">
+        <div className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-cyan-300/45 blur-3xl" />
+        <div className="pointer-events-none absolute -right-16 top-20 h-80 w-80 rounded-full bg-emerald-300/35 blur-3xl" />
+        <div className="pointer-events-none absolute bottom-0 left-1/2 h-72 w-96 -translate-x-1/2 rounded-full bg-sky-300/30 blur-3xl" />
 
-        {/* Main Content */}
-        <div className="flex-1 max-w-7xl mx-auto px-4 md:px-8 py-12 md:py-16 w-full">
+        <div className="relative z-10 flex min-h-screen items-center justify-center px-4 py-8 sm:px-6">
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6 }}
-            className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center"
+            initial={{ opacity: 0, y: 24, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.5 }}
+            className="w-full max-w-md rounded-3xl border border-white/50 bg-white/85 p-7 shadow-2xl backdrop-blur-md sm:p-9"
           >
-            {/* Left Side - Content */}
-            <div className="space-y-8">
-              <div>
-                <h1 className="text-5xl md:text-6xl font-bold text-slate-900 mb-6 leading-tight">
-                  Track Your <span className="text-blue-600">OJT Progress</span>
-                </h1>
-                <p className="text-lg text-slate-600 leading-relaxed">
-                  A clean, intuitive platform to monitor your on-the-job training hours and professional development journey.
-                </p>
-              </div>
-              
-              <div className="space-y-4">
-                <div className="flex items-start gap-4">
-                  <div className="mt-1 shrink-0">
-                    <div className="flex items-center justify-center h-6 w-6 rounded-full bg-blue-100">
-                      <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    </div>
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-slate-900">Daily Time Tracking</h3>
-                    <p className="text-slate-600 text-sm">Log your work hours with accurate records</p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-4">
-                  <div className="mt-1 shrink-0">
-                    <div className="flex items-center justify-center h-6 w-6 rounded-full bg-blue-100">
-                      <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    </div>
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-slate-900">Progress Dashboard</h3>
-                    <p className="text-slate-600 text-sm">Visualize your growth with charts</p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-4">
-                  <div className="mt-1 shrink-0">
-                    <div className="flex items-center justify-center h-6 w-6 rounded-full bg-blue-100">
-                      <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    </div>
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-slate-900">Weekly Reports</h3>
-                    <p className="text-slate-600 text-sm">Document your experiences</p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-4">
-                  <div className="mt-1 shrink-0">
-                    <div className="flex items-center justify-center h-6 w-6 rounded-full bg-blue-100">
-                      <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    </div>
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-slate-900">Export Reports</h3>
-                    <p className="text-slate-600 text-sm">Generate professional Excel DTR</p>
-                  </div>
-                </div>
-              </div>
+            <div className="mb-7 text-center">
+              <p className="text-sm font-semibold tracking-[0.22em] text-cyan-700">OJT TRACKER</p>
+              <h1 className="mt-2 text-2xl font-black text-slate-900 sm:text-3xl">Sign In</h1>
+              <p className="mt-2 text-sm text-slate-600">Use Google or email verification code.</p>
             </div>
 
-            {/* Right Side - Login Card */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.6, delay: 0.2 }}
-              className="h-full flex items-center justify-center lg:justify-end"
+            {error ? (
+              <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {error}
+              </div>
+            ) : null}
+
+            {authNotice ? (
+              <div className="mb-5 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                {authNotice}
+              </div>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={googleLoading}
+              className="w-full flex items-center justify-center gap-3 bg-linear-to-r from-blue-50 to-blue-100 border-2 border-blue-200 hover:border-blue-400 hover:from-blue-100 hover:to-blue-150 rounded-xl px-4 py-3 font-semibold text-slate-800 transition-all disabled:opacity-60"
             >
-              <div className="w-full max-w-sm bg-white rounded-2xl shadow-lg border border-blue-100 p-8">
-                <div className="mb-8">
-                  <h2 className="text-2xl font-bold text-slate-900 mb-2">Get Started</h2>
-                  <p className="text-slate-600 text-sm">Sign in with Google to begin</p>
-                </div>
+              <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  fill="#4285F4"
+                  d="M23.49 12.27c0-.79-.06-1.36-.19-1.96H12.24v4.2h6.49c-.13 1.04-.83 2.61-2.39 3.66l-.02.14 3.42 2.65.24.02c2.2-2.03 3.51-5.01 3.51-8.71z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12.24 23.75c3.18 0 5.84-1.05 7.79-2.86l-3.71-2.87c-.99.69-2.32 1.17-4.08 1.17-3.12 0-5.77-2.03-6.7-4.85l-.13.01-3.56 2.75-.04.12c1.95 3.88 5.97 6.53 10.43 6.53z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.54 14.34a7.14 7.14 0 01-.39-2.34c0-.81.14-1.59.37-2.34l-.01-.16-3.61-2.79-.12.06A11.49 11.49 0 00.5 12c0 1.85.45 3.6 1.28 5.23z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12.24 4.81c2.22 0 3.71.96 4.56 1.76l3.33-3.25C18.07 1.4 15.42.25 12.24.25 7.78.25 3.76 2.9 1.81 6.78l3.74 2.9c.95-2.82 3.6-4.87 6.69-4.87z"
+                />
+              </svg>
+              {googleLoading ? "Signing in..." : "Continue with Google"}
+            </button>
 
-                {error ? (
-                  <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                    {error}
-                  </div>
-                ) : null}
+            <div className="my-6 flex items-center gap-3 text-xs text-slate-400">
+              <div className="h-px flex-1 bg-slate-300" />
+              <span>OR</span>
+              <div className="h-px flex-1 bg-slate-300" />
+            </div>
 
-                <button
-                  type="button"
-                  onClick={handleGoogleSignIn}
-                  disabled={googleLoading}
-                  className="w-full flex items-center justify-center gap-3 bg-linear-to-r from-blue-50 to-blue-100 border-2 border-blue-200 hover:border-blue-400 hover:from-blue-100 hover:to-blue-150 rounded-lg px-4 py-3 font-semibold text-slate-800 transition-all disabled:opacity-60 mb-8"
-                >
-                  <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
-                    <path
-                      fill="#4285F4"
-                      d="M23.49 12.27c0-.79-.06-1.36-.19-1.96H12.24v4.2h6.49c-.13 1.04-.83 2.61-2.39 3.66l-.02.14 3.42 2.65.24.02c2.2-2.03 3.51-5.01 3.51-8.71z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M12.24 23.75c3.18 0 5.84-1.05 7.79-2.86l-3.71-2.87c-.99.69-2.32 1.17-4.08 1.17-3.12 0-5.77-2.03-6.7-4.85l-.13.01-3.56 2.75-.04.12c1.95 3.88 5.97 6.53 10.43 6.53z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M5.54 14.34a7.14 7.14 0 01-.39-2.34c0-.81.14-1.59.37-2.34l-.01-.16-3.61-2.79-.12.06A11.49 11.49 0 00.5 12c0 1.85.45 3.6 1.28 5.23z"
-                    />
-                    <path
-                      fill="#EA4335"
-                      d="M12.24 4.81c2.22 0 3.71.96 4.56 1.76l3.33-3.25C18.07 1.4 15.42.25 12.24.25 7.78.25 3.76 2.9 1.81 6.78l3.74 2.9c.95-2.82 3.6-4.87 6.69-4.87z"
-                    />
-                  </svg>
-                  {googleLoading ? "Signing in..." : "Continue with Google"}
-                </button>
+            <form onSubmit={handleVerifyEmailCode} className="space-y-3">
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Email (Outlook supported)
+              </label>
+              <input
+                type="email"
+                value={emailAuthForm.email}
+                onChange={(e) =>
+                  setEmailAuthForm((prev) => ({ ...prev, email: e.target.value }))
+                }
+                placeholder="you@outlook.com"
+                className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none"
+                autoComplete="email"
+                disabled={emailAuthLoading || googleLoading}
+              />
+              <button
+                type="button"
+                onClick={handleSendEmailCode}
+                disabled={emailAuthLoading || googleLoading || emailOtpCooldownSecondsLeft > 0}
+                className="w-full rounded-xl border border-blue-300 bg-blue-50 px-3 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+              >
+                {emailAuthLoading
+                  ? "Sending code..."
+                  : emailOtpCooldownSecondsLeft > 0
+                    ? `Resend in ${emailOtpCooldownSecondsLeft}s`
+                    : "Send verification code"}
+              </button>
 
-                <div className="space-y-2 text-xs text-slate-600">
-                  <div className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-green-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span>Secure OAuth Authentication</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-green-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span>Your data is encrypted</span>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Verification code
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={emailAuthForm.code}
+                onChange={(e) =>
+                  setEmailAuthForm((prev) => ({ ...prev, code: e.target.value }))
+                }
+                placeholder="Enter code from email"
+                className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none"
+                disabled={emailAuthLoading || googleLoading}
+              />
+              <button
+                type="submit"
+                disabled={emailAuthLoading || googleLoading}
+                className="w-full rounded-xl bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
+              >
+                {emailAuthLoading ? "Verifying..." : "Verify code and sign in"}
+              </button>
+            </form>
           </motion.div>
-        </div>
-
-        {/* Footer */}
-        <div className="border-t border-blue-100 bg-white/50 backdrop-blur-sm mt-auto">
-          <div className="max-w-7xl mx-auto px-4 md:px-8 py-8">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
-              <div>
-                <h3 className="font-semibold text-slate-900 mb-3">About</h3>
-                <p className="text-sm text-slate-600">OJT Tracker helps you manage and track your on-the-job training hours with ease.</p>
-              </div>
-              <div>
-                <h3 className="font-semibold text-slate-900 mb-3">Features</h3>
-                <ul className="space-y-2 text-sm text-slate-600">
-                  <li>Time tracking</li>
-                  <li>Progress monitoring</li>
-                  <li>Report generation</li>
-                </ul>
-              </div>
-              <div>
-                <h3 className="font-semibold text-slate-900 mb-3">Support</h3>
-                <p className="text-sm text-slate-600">Need help? Contact us for assistance with your OJT tracking.</p>
-              </div>
-            </div>
-            <div className="border-t border-blue-100 pt-6 flex flex-col md:flex-row items-center justify-between">
-              <p className="text-sm text-slate-600">© 2026 OJT Tracker. All rights reserved.</p>
-              <div className="flex gap-6 mt-4 md:mt-0">
-                <a href="#" className="text-sm text-slate-600 hover:text-blue-600 transition">Privacy Policy</a>
-                <a href="#" className="text-sm text-slate-600 hover:text-blue-600 transition">Terms of Service</a>
-                <a href="#" className="text-sm text-slate-600 hover:text-blue-600 transition">Contact</a>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     );

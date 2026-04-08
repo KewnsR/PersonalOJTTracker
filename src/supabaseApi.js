@@ -65,13 +65,26 @@ const getSupabase = () => {
   return supabase;
 };
 
+const normalizeAuthProvider = (provider = "google") => {
+  const normalized = String(provider || "").trim().toLowerCase();
+
+  if (normalized === "azure" || normalized === "microsoft" || normalized === "outlook") {
+    return "outlook";
+  }
+
+  if (normalized === "email" || normalized === "otp") {
+    return "email";
+  }
+
+  return "google";
+};
+
 export const directGoogleAuth = async (supabaseAccessToken, provider = "google") => {
   if (!supabaseAccessToken) {
     throw new Error("Missing Supabase access token");
   }
 
-  const oauthProvider = String(provider || "google").toLowerCase();
-  const normalizedProvider = oauthProvider === "azure" ? "outlook" : "google";
+  const normalizedProvider = normalizeAuthProvider(provider);
 
   const supabase = getSupabase();
   const { data: authData, error: authError } = await supabase.auth.getUser(supabaseAccessToken);

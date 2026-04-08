@@ -10,12 +10,12 @@ It is built for simple progress tracking during internship or on-the-job trainin
 - Track daily attendance with time in/out and notes.
 - Monitor total completed OJT hours and progress trends.
 - Manage weekly reports in one place.
-- Authenticate users with Google OAuth.
+- Authenticate users with Google OAuth or email verification code.
 - Store and load data from Supabase.
 
 ## Tech Stack
 - React + Vite
-- Supabase (database + Google OAuth)
+- Supabase (database + OAuth + email OTP)
 
 ## Quick Start
 1. Install dependencies:
@@ -40,13 +40,20 @@ Create a `.env` file for local use:
 ## Supabase Setup
 1. Create a Supabase project.
 2. Open SQL Editor and run [supabase/schema.sql](supabase/schema.sql).
-3. In Supabase Authentication, enable Google provider and set Google OAuth credentials.
-4. Add frontend env vars `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
-5. For deployed OAuth stability, set `VITE_OAUTH_REDIRECT_URL` to your production URL.
+3. In Supabase Authentication, enable Google provider.
+4. Optionally enable email OTP in Supabase Auth > Providers > Email.
+5. Add frontend env vars `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
+6. For deployed OAuth stability, set `VITE_OAUTH_REDIRECT_URL` to your production URL.
 
 ## Authentication
-- Google sign-in is supported.
-- Email/password endpoints are disabled by design.
+- Google OAuth sign-in is supported.
+- Email verification-code sign-in (OTP) is supported and works with Outlook email addresses.
+- Legacy backend email/password endpoints remain disabled by design.
+
+## OTP Email Template (Important)
+- In Supabase: `Authentication -> Email Templates -> Magic Link`.
+- Ensure the template body includes `{{ .Token }}` so users can see the verification code.
+- If the email currently shows only a clickable confirmation link, edit the template to show the token and remove link-only wording.
 
 ## Docker (Local Development)
 1. Build and start the app in Docker:
