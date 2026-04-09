@@ -262,9 +262,24 @@ const clearOAuthParamsFromUrl = () => {
   }
 };
 
+const getProviderFromSession = (session) => {
+  const primaryProvider = session?.user?.app_metadata?.provider;
+  if (primaryProvider) {
+    return normalizeOAuthProvider(primaryProvider);
+  }
+
+  const firstIdentityProvider = session?.user?.identities?.[0]?.provider;
+  if (firstIdentityProvider) {
+    return normalizeOAuthProvider(firstIdentityProvider);
+  }
+
+  return "";
+};
+
 const getPendingOAuthProvider = () => {
-  if (typeof window === "undefined") return OAUTH_PROVIDER_GOOGLE;
+  if (typeof window === "undefined") return "";
   const stored = window.localStorage.getItem(OAUTH_PROVIDER_STORAGE_KEY) || "";
+  if (!stored) return "";
   return normalizeOAuthProvider(stored);
 };
 
@@ -660,7 +675,10 @@ export default function App() {
         const accessToken = sessionData?.session?.access_token;
         if (!accessToken || cancelled) return;
 
-        const oauthProvider = getPendingOAuthProvider();
+        const oauthProvider =
+          getPendingOAuthProvider() ||
+          getProviderFromSession(sessionData?.session) ||
+          OAUTH_PROVIDER_GOOGLE;
 
         setGoogleLoading(true);
         await completeOAuthBackendAuth(accessToken, oauthProvider);
@@ -690,7 +708,8 @@ export default function App() {
       const accessToken = session?.access_token;
       if (!accessToken || authToken) return;
 
-      const oauthProvider = getPendingOAuthProvider();
+      const oauthProvider =
+        getPendingOAuthProvider() || getProviderFromSession(session) || OAUTH_PROVIDER_GOOGLE;
 
       setGoogleLoading(true);
       try {
@@ -1057,6 +1076,7 @@ export default function App() {
     setEmailAuthLoading(true);
     setError("");
     setAuthNotice("");
+    setPendingOAuthProvider(OAUTH_PROVIDER_EMAIL);
 
     try {
       const { error: otpError } = await supabase.auth.signInWithOtp({
@@ -1086,6 +1106,7 @@ export default function App() {
       } else {
         setError(`Email sign in failed: ${authMessage}`);
       }
+      clearPendingOAuthProvider();
       setAuthNotice("");
     } finally {
       setEmailAuthLoading(false);
