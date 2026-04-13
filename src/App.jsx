@@ -10,6 +10,7 @@ import {
   directUpdateEntry,
   directUpdatePreferences,
   directUpdateProfile,
+  uploadProfileImage,
 } from "./supabaseApi";
 import "react-calendar/dist/Calendar.css";
 
@@ -327,6 +328,7 @@ export default function App() {
     email: "",
     department: "",
     supervisor: "",
+    image_url: "",
   });
   const [profileForm, setProfileForm] = useState({
     name: "OJT Trainee",
@@ -335,6 +337,7 @@ export default function App() {
     email: "",
     department: "",
     supervisor: "",
+    image_url: "",
   });
 
   const [lunchStart, setLunchStart] = useState(11);
@@ -342,6 +345,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showGoalModal, setShowGoalModal] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -1411,6 +1416,31 @@ export default function App() {
     }
   };
 
+  const handleProfileImageChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      // Show preview
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setImagePreview(event.target?.result);
+      };
+      reader.readAsDataURL(file);
+
+      // Upload image
+      setIsUploadingImage(true);
+      const imageUrl = await uploadProfileImage(authUser?.id, file);
+      setProfileForm((prev) => ({ ...prev, image_url: imageUrl }));
+      setError("");
+    } catch (err) {
+      setError(`Image upload failed: ${err?.message || "Unknown error"}`);
+      setImagePreview(null);
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
   const saveProfile = async () => {
     try {
       const nextProfile = useDirectSupabase
@@ -1419,6 +1449,7 @@ export default function App() {
 
       setProfile(nextProfile);
       setProfileForm(nextProfile);
+      setImagePreview(null);
       localStorage.setItem("userProfile", JSON.stringify(nextProfile));
       setShowProfileModal(false);
     } catch {
@@ -2172,9 +2203,18 @@ export default function App() {
                   : "border border-slate-700 bg-slate-800 hover:border-cyan-400/50"
               }`}
             >
-              <div className="grid h-11 w-11 place-items-center rounded-full bg-blue-600 text-white font-bold">
-                {initials}
-              </div>
+              {profile.image_url ? (
+                <img
+                  src={profile.image_url}
+                  alt={profile.name}
+                  className="h-11 w-11 rounded-full object-cover border-2 border-blue-600"
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+              ) : (
+                <div className="grid h-11 w-11 place-items-center rounded-full bg-blue-600 text-white font-bold">
+                  {initials}
+                </div>
+              )}
               <div className="hidden sm:block pr-3">
                 <div className={`text-sm font-semibold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>
                   {profile.name}
@@ -2194,6 +2234,11 @@ export default function App() {
                 }`}
               >
                 <div className="bg-blue-600 p-5 text-white">
+                  {profile.image_url && (
+                    <div className="mb-3 h-20 w-20 overflow-hidden rounded-full border-2 border-white">
+                      <img src={profile.image_url} alt={profile.name} className="h-full w-full object-cover" onError={(e) => { e.target.parentElement.style.display = 'none'; }} />
+                    </div>
+                  )}
                   <div className="font-semibold text-lg">{profile.name}</div>
                   <div className="text-sm text-white/90">{profile.position || "OJT Trainee"}</div>
                 </div>
@@ -3294,7 +3339,10 @@ export default function App() {
         {showProfileModal && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-            onClick={() => setShowProfileModal(false)}
+            onClick={() => {
+              setShowProfileModal(false);
+              setImagePreview(null);
+            }}
           >
             <motion.div
               initial={{ opacity: 0, y: 10, scale: 0.98 }}
@@ -3304,6 +3352,44 @@ export default function App() {
             >
               <h2 className={`mb-5 text-2xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>Edit Profile</h2>
               <div className="space-y-3">
+                <div>
+                  <label className={`mb-1 block text-sm font-semibold ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>Profile Photo</label>
+                  <div className={`relative rounded-lg border-2 border-dashed p-4 text-center ${
+                    themeMode === "light"
+                      ? "border-slate-300 bg-slate-50"
+                      : "border-slate-600 bg-slate-800"
+                  }`}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleProfileImageChange}
+                      disabled={isUploadingImage}
+                      className="hidden"
+                      id="profile-image-input"
+                    />
+                    <label 
+                      htmlFor="profile-image-input"
+                      className={`block cursor-pointer py-4 ${isUploadingImage ? "opacity-50" : ""}`}
+                    >
+                      <div className={`text-sm font-semibold ${themeMode === "light" ? "text-slate-600" : "text-slate-300"}`}>
+                        {isUploadingImage ? "Uploading..." : "Click to upload or drag and drop"}
+                      </div>
+                      <div className={`text-xs ${themeMode === "light" ? "text-slate-500" : "text-slate-400"}`}>
+                        PNG, JPG, GIF up to 5MB
+                      </div>
+                    </label>
+                  </div>
+                  {(imagePreview || profileForm.image_url) && (
+                    <div className="mt-3 h-24 w-24 overflow-hidden rounded-lg border-2 border-blue-500 mx-auto">
+                      <img 
+                        src={imagePreview || profileForm.image_url} 
+                        alt="Preview" 
+                        className="h-full w-full object-cover" 
+                        onError={(e) => { e.target.style.display = 'none'; }} 
+                      />
+                    </div>
+                  )}
+                </div>
                 {[
                   ["name", "Full Name"],
                   ["position", "Position"],
@@ -3332,7 +3418,10 @@ export default function App() {
               <div className="mt-6 flex gap-3">
                 <button
                   type="button"
-                  onClick={() => setShowProfileModal(false)}
+                  onClick={() => {
+                    setShowProfileModal(false);
+                    setImagePreview(null);
+                  }}
                   className={`flex-1 rounded-lg py-2 font-semibold ${
                     themeMode === "light"
                       ? "border border-slate-300 bg-slate-100 text-slate-800 hover:bg-slate-200"

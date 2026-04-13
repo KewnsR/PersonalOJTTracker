@@ -30,6 +30,7 @@ const ensureUserDefaults = async (supabase, uid, profile = {}) => {
       email: profile.email || "",
       department: profile.department || "",
       supervisor: profile.supervisor || "",
+      image_url: profile.image_url || "",
       updated_at: now,
     },
     { onConflict: "user_id", ignoreDuplicates: true }
@@ -410,6 +411,7 @@ export const directUpdateProfile = async (uid, authUser, payload) => {
     email: payload?.email,
     department: payload?.department,
     supervisor: payload?.supervisor,
+    image_url: payload?.image_url,
     updated_at: now,
   };
 
@@ -422,7 +424,7 @@ export const directUpdateProfile = async (uid, authUser, payload) => {
   const { data: profileRow, error: profileError } = await supabase
     .from("user_profile")
     .upsert(profilePayload, { onConflict: "user_id" })
-    .select("name,position,company,email,department,supervisor")
+    .select("name,position,company,email,department,supervisor,image_url")
     .single();
 
   if (profileError) throw profileError;
@@ -446,5 +448,50 @@ export const directUpdateProfile = async (uid, authUser, payload) => {
     email: profileRow.email || authUser?.email || "",
     department: profileRow.department || "",
     supervisor: profileRow.supervisor || "",
+    image_url: profileRow.image_url || "",
   };
+};
+
+export const uploadProfileImage = async (uid, file) => {
+  if (!file) {
+    throw new Error("No file provided");
+  }
+
+  // Validate file is an image
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Only image files are allowed");
+  }
+
+  // Validate file size (max 5MB)
+  const maxSize = 5 * 1024 * 1024;
+  if (file.size > maxSize) {
+    throw new Error("File size must be less than 5MB");
+  }
+
+  const supabase = getSupabase();
+
+  // Create unique filename
+  const filename = `${uid}-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "")}`;
+  const filepath = `profile-images/${uid}/${filename}`;
+
+  // Upload to Supabase Storage
+  const { data, error } = await supabase.storage
+    .from("profile-images")
+    .upload(filepath, file, {
+      cacheControl: "3600",
+      upsert: false,
+    });
+
+  if (error) {
+    throw new Error(`Upload failed: ${error.message}`);
+  }
+
+  // Get public URL
+  const { data: urlData } = supabase.storage.from("profile-images").getPublicUrl(filepath);
+
+  if (!urlData?.publicUrl) {
+    throw new Error("Failed to get public URL for uploaded image");
+  }
+
+  return urlData.publicUrl;
 };
