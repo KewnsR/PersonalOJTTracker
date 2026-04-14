@@ -106,6 +106,11 @@ const getEndOfWeek = (date) => {
   return end;
 };
 
+const getDayOfWeek = (date) => {
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  return days[date.getDay()];
+};
+
 const errorToText = (value) => {
   if (!value) return "";
   if (typeof value === "string") return value;
@@ -315,6 +320,7 @@ export default function App() {
     timeIn: "08:00",
     timeOut: "18:00",
     notes: "",
+    day: "",
   });
   const persistEntriesLocally = (nextEntries) => {
     localStorage.setItem("ojtData", JSON.stringify(nextEntries));
@@ -1200,17 +1206,23 @@ export default function App() {
 
   const handleDateSelect = (date) => {
     setSelectedDate(date);
-    setForm((prev) => ({ ...prev, date: toLocalDateString(date) }));
+    setForm((prev) => ({
+      ...prev,
+      date: toLocalDateString(date),
+      day: getDayOfWeek(date),
+    }));
   };
 
   const openAddModal = () => {
+    const today = new Date();
     setEditingId(null);
-    setSelectedDate(new Date());
+    setSelectedDate(today);
     setForm({
-      date: toLocalDateString(new Date()),
+      date: toLocalDateString(today),
       timeIn: "08:00",
       timeOut: "18:00",
       notes: "",
+      day: getDayOfWeek(today),
     });
     setTimeIn12({ hour: "08", minute: "00", period: "AM" });
     setTimeOut12({ hour: "06", minute: "00", period: "PM" });
@@ -1224,16 +1236,18 @@ export default function App() {
 
   const handleEdit = (entry) => {
     const entryId = getEntryId(entry);
+    const entryDate = fromDateString(entry.date);
     setEditingId(entryId);
     setForm({
       date: entry.date,
       timeIn: entry.timeIn,
       timeOut: entry.timeOut,
       notes: entry.notes || "",
+      day: getDayOfWeek(entryDate),
     });
     setTimeIn12(toTwelveHour(entry.timeIn));
     setTimeOut12(toTwelveHour(entry.timeOut));
-    setSelectedDate(fromDateString(entry.date));
+    setSelectedDate(entryDate);
     setShowAddModal(true);
   };
 
@@ -2476,6 +2490,7 @@ export default function App() {
               <thead className={themeMode === "light" ? "bg-slate-100 text-slate-700" : "bg-slate-800/70 text-slate-200"}>
                 <tr>
                   <th className="p-4 text-left">Date</th>
+                  <th className="p-4 text-left">Day</th>
                   <th className="p-4 text-left">In</th>
                   <th className="p-4 text-left">Out</th>
                   <th className="p-4 text-left">Hours</th>
@@ -2486,7 +2501,7 @@ export default function App() {
               <tbody>
                 {sortedEntries.length === 0 ? (
                   <tr>
-                    <td className="p-8 text-center text-slate-400" colSpan="6">
+                    <td className="p-8 text-center text-slate-400" colSpan="7">
                       No entries yet. Add your first one.
                     </td>
                   </tr>
@@ -2501,6 +2516,7 @@ export default function App() {
                       }
                     >
                       <td className={`p-4 ${themeMode === "light" ? "text-slate-700" : "text-slate-200"}`}>{entry.date}</td>
+                      <td className={`p-4 font-medium ${themeMode === "light" ? "text-slate-600" : "text-slate-300"}`}>{entry.day || "-"}</td>
                       <td className={`p-4 ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>{formatTimeDisplay(entry.timeIn)}</td>
                       <td className={`p-4 ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>{formatTimeDisplay(entry.timeOut)}</td>
                       <td className={`p-4 font-semibold ${themeMode === "light" ? "text-blue-600" : "text-cyan-300"}`}>
@@ -3176,6 +3192,19 @@ export default function App() {
                           <option value="PM">PM</option>
                         </select>
                       </div>
+                    </div>
+                    <div>
+                      <label className={`mb-2 block text-sm font-semibold ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>Day of Week</label>
+                      <input
+                        type="text"
+                        value={form.day}
+                        readOnly
+                        className={`w-full rounded-lg px-3 py-2 ${
+                          themeMode === "light"
+                            ? "border border-slate-300 bg-slate-100 text-slate-900"
+                            : "border border-slate-700 bg-slate-800 text-slate-100"
+                        }`}
+                      />
                     </div>
                     <div>
                       <label className={`mb-2 block text-sm font-semibold ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>Notes</label>

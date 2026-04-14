@@ -14,6 +14,7 @@ const toEntryResponse = (entryRow) => ({
   timeOut: entryRow.time_out,
   hours: entryRow.hours,
   notes: entryRow.notes || "",
+  day: entryRow.day || "",
   createdAt: entryRow.created_at,
   updatedAt: entryRow.updated_at,
 });
@@ -211,7 +212,7 @@ export const directLoadDashboard = async (uid, fallbackUser = null) => {
   const [entriesResult, prefsResult, profileResult] = await Promise.allSettled([
     supabase
       .from("entries")
-      .select("id,date,time_in,time_out,hours,notes,created_at,updated_at")
+      .select("id,date,time_in,time_out,hours,notes,day,created_at,updated_at")
       .eq("user_id", uid)
       .order("date", { ascending: false })
       .order("time_in", { ascending: false }),
@@ -323,10 +324,11 @@ export const directCreateEntry = async (uid, payload) => {
       time_out: payload?.timeOut,
       hours: payload?.hours,
       notes: payload?.notes || "",
+      day: payload?.day || "",
       created_at: now,
       updated_at: now,
     })
-    .select("id,date,time_in,time_out,hours,notes,created_at,updated_at")
+    .select("id,date,time_in,time_out,hours,notes,day,created_at,updated_at")
     .single();
 
   if (error) throw error;
@@ -345,11 +347,12 @@ export const directUpdateEntry = async (uid, entryId, payload) => {
       time_out: payload?.timeOut,
       hours: payload?.hours,
       notes: payload?.notes || "",
+      day: payload?.day || "",
       updated_at: now,
     })
     .eq("id", entryId)
     .eq("user_id", uid)
-    .select("id,date,time_in,time_out,hours,notes,created_at,updated_at")
+    .select("id,date,time_in,time_out,hours,notes,day,created_at,updated_at")
     .single();
 
   if (error) throw error;
