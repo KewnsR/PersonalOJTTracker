@@ -31,7 +31,6 @@ const ensureUserDefaults = async (supabase, uid, profile = {}) => {
       email: profile.email || "",
       department: profile.department || "",
       supervisor: profile.supervisor || "",
-      image_url: profile.image_url || "",
       updated_at: now,
     },
     { onConflict: "user_id", ignoreDuplicates: true }
@@ -414,7 +413,6 @@ export const directUpdateProfile = async (uid, authUser, payload) => {
     email: payload?.email,
     department: payload?.department,
     supervisor: payload?.supervisor,
-    image_url: payload?.image_url,
     updated_at: now,
   };
 
@@ -427,7 +425,7 @@ export const directUpdateProfile = async (uid, authUser, payload) => {
   const { data: profileRow, error: profileError } = await supabase
     .from("user_profile")
     .upsert(profilePayload, { onConflict: "user_id" })
-    .select("name,position,company,email,department,supervisor,image_url")
+    .select("name,position,company,email,department,supervisor")
     .single();
 
   if (profileError) throw profileError;
@@ -451,7 +449,6 @@ export const directUpdateProfile = async (uid, authUser, payload) => {
     email: profileRow.email || authUser?.email || "",
     department: profileRow.department || "",
     supervisor: profileRow.supervisor || "",
-    image_url: profileRow.image_url || "",
   };
 };
 
