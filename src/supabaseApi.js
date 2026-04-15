@@ -468,30 +468,47 @@ export const uploadProfileImage = async (uid, file) => {
     throw new Error("File size must be less than 5MB");
   }
 
-  const supabase = getSupabase();
+  try {
+    const supabase = getSupabase();
 
-  // Create unique filename
-  const filename = `${uid}-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "")}`;
-  const filepath = `profile-images/${uid}/${filename}`;
+    // Create unique filename
+    const filename = `${uid}-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "")}`;
+    const filepath = `profile-images/${uid}/${filename}`;
 
-  // Upload to Supabase Storage
-  const { data, error } = await supabase.storage
-    .from("profile-images")
-    .upload(filepath, file, {
-      cacheControl: "3600",
-      upsert: false,
-    });
+    // Upload to Supabase Storage
+    const { data, error } = await supabase.storage
+      .from("profile-images")
+      .upload(filepath, file, {
+        cacheControl: "3600",
+        upsert: false,
+      });
 
-  if (error) {
-    throw new Error(`Upload failed: ${error.message}`);
+    if (error) {
+      throw new Error(`Upload failed: ${error.message}`);
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage.from("profile-images").getPublicUrl(filepath);
+
+    if (!urlData?.publicUrl) {
+      throw new Error("Failed to get public URL for uploaded image");
+    }
+
+    return urlData.publicUrl;
+  } catch (err) {
+    // If Supabase is not configured, store image as base64 in profile
+    if (err.message.includes("Supabase client is not configured")) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          resolve(event.target.result);
+        };
+        reader.onerror = () => {
+          reject(new Error("Failed to read file"));
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+    throw err;
   }
-
-  // Get public URL
-  const { data: urlData } = supabase.storage.from("profile-images").getPublicUrl(filepath);
-
-  if (!urlData?.publicUrl) {
-    throw new Error("Failed to get public URL for uploaded image");
-  }
-
-  return urlData.publicUrl;
 };

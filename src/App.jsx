@@ -1429,8 +1429,29 @@ export default function App() {
   };
 
   const handleProfileImageChange = async (e) => {
-    // Image upload disabled - image_url column not in schema
-    setError("Image upload is not yet supported");
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      // Show preview immediately
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setImagePreview(event.target.result);
+      };
+      reader.readAsDataURL(file);
+
+      // Upload the file
+      if (useDirectSupabase) {
+        const imageUrl = await uploadProfileImage(authUser?.id, file);
+        setProfileForm((prev) => ({ ...prev, image_url: imageUrl }));
+      } else {
+        const imageUrl = await uploadProfileImage(authUser?.id, file);
+        setProfileForm((prev) => ({ ...prev, image_url: imageUrl }));
+      }
+    } catch (err) {
+      setError(err.message || "Failed to upload image");
+      setImagePreview(null);
+    }
   };
 
   const saveProfile = async () => {
@@ -2215,24 +2236,91 @@ export default function App() {
 
             {showProfileDropdown && (
               <div
-                className={`absolute right-0 mt-2 w-80 overflow-hidden rounded-2xl shadow-2xl ${
+                className={`absolute right-0 mt-2 w-96 overflow-hidden rounded-2xl shadow-2xl ${
                   themeMode === "light"
                     ? "border border-slate-200 bg-white"
                     : "border border-slate-700 bg-slate-900"
                 }`}
               >
-                <div className="bg-blue-600 p-5 text-white">
-                  <div className="grid h-20 w-20 place-items-center rounded-full bg-white/20 mb-3">
-                    {initials}
+                {/* Header with background */}
+                <div className="relative bg-linear-to-r from-cyan-500 to-blue-600 p-6 text-white">
+                  {/* Decorative dots */}
+                  <div className="absolute bottom-0 right-0 opacity-10">
+                    <div className="flex gap-2">
+                      {[...Array(4)].map((_, i) => (
+                        <div key={i} className="h-3 w-3 rounded-full bg-white"></div>
+                      ))}
+                    </div>
                   </div>
-                  <div className="font-semibold text-lg">{profile.name}</div>
-                  <div className="text-sm text-white/90">{profile.position || "OJT Trainee"}</div>
+
+                  {/* Profile Image and Info */}
+                  <div className="relative z-10 flex items-start gap-4">
+                    <div className="relative h-20 w-20 shrink-0">
+                      {profileForm.image_url ? (
+                        <img
+                          src={profileForm.image_url}
+                          alt={profileForm.name}
+                          className="h-full w-full rounded-full border-3 border-white object-cover shadow-lg"
+                        />
+                      ) : (
+                        <div className="grid h-full w-full place-items-center rounded-full border-3 border-white bg-white/20 shadow-lg">
+                          <span className="text-2xl font-bold text-white">{initials}</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-lg font-bold leading-tight">{profileForm.name || profile.name}</h3>
+                      <p className="text-sm text-white/90">{profileForm.position || profile.position || "OJT Trainee"}</p>
+                      {profileForm.company && (
+                        <p className="mt-1 text-xs text-white/80">{profileForm.company}</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
+
+                {/* Stats Section */}
+                <div className={`grid grid-cols-2 gap-4 p-4 ${themeMode === "light" ? "border-b border-slate-200 bg-slate-50" : "border-b border-slate-800 bg-slate-800/50"}`}>
+                  <div className="text-center">
+                    <div className={`text-2xl font-bold ${themeMode === "light" ? "text-cyan-600" : "text-cyan-400"}`}>
+                      {loggedDaysCount}
+                    </div>
+                    <div className={`text-xs font-medium ${themeMode === "light" ? "text-slate-600" : "text-slate-400"}`}>
+                      Logged Days
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className={`text-2xl font-bold ${themeMode === "light" ? "text-cyan-600" : "text-cyan-400"}`}>
+                      {totalHours.toFixed(1)}h
+                    </div>
+                    <div className={`text-xs font-medium ${themeMode === "light" ? "text-slate-600" : "text-slate-400"}`}>
+                      Total Hours
+                    </div>
+                  </div>
+                </div>
+
+                {/* Details Section */}
                 <div className={`space-y-2 p-4 text-sm ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>
-                  {profile.company ? <p><span className={themeMode === "light" ? "text-slate-500" : "text-slate-400"}>Company:</span> {profile.company}</p> : null}
-                  {profile.department ? <p><span className={themeMode === "light" ? "text-slate-500" : "text-slate-400"}>Department:</span> {profile.department}</p> : null}
-                  {profile.email ? <p><span className={themeMode === "light" ? "text-slate-500" : "text-slate-400"}>Email:</span> {profile.email}</p> : null}
+                  {profileForm.department && (
+                    <div className="flex items-center gap-2">
+                      <span className={`font-medium ${themeMode === "light" ? "text-slate-500" : "text-slate-400"}`}>Department:</span>
+                      <span>{profileForm.department}</span>
+                    </div>
+                  )}
+                  {profileForm.supervisor && (
+                    <div className="flex items-center gap-2">
+                      <span className={`font-medium ${themeMode === "light" ? "text-slate-500" : "text-slate-400"}`}>Supervisor:</span>
+                      <span>{profileForm.supervisor}</span>
+                    </div>
+                  )}
+                  {profileForm.email && (
+                    <div className="flex items-center gap-2">
+                      <span className={`font-medium ${themeMode === "light" ? "text-slate-500" : "text-slate-400"}`}>Email:</span>
+                      <span className="truncate">{profileForm.email}</span>
+                    </div>
+                  )}
                 </div>
+
+                {/* Buttons Section */}
                 <div className={`flex gap-2 p-4 ${themeMode === "light" ? "border-t border-slate-200" : "border-t border-slate-800"}`}>
                   <button
                     type="button"
@@ -2240,7 +2328,7 @@ export default function App() {
                       setShowProfileDropdown(false);
                       setShowProfileModal(true);
                     }}
-                    className="flex-1 rounded-lg bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400"
+                    className="flex-1 rounded-lg bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400 transition"
                   >
                     Edit Profile
                   </button>
@@ -2250,7 +2338,7 @@ export default function App() {
                       setShowProfileDropdown(false);
                       setShowSettings(true);
                     }}
-                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold ${
+                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ${
                       themeMode === "light"
                         ? "border border-slate-300 bg-slate-100 text-slate-800 hover:bg-slate-200"
                         : "bg-slate-800 text-slate-200 hover:bg-slate-700"
@@ -2259,15 +2347,17 @@ export default function App() {
                     Settings
                   </button>
                 </div>
+
+                {/* Logout Button */}
                 <div className={`px-4 pb-4 ${themeMode === "light" ? "border-t border-slate-200" : "border-t border-slate-800"}`}>
                   <button
                     type="button"
                     onClick={requestLogout}
-                    className={
+                    className={`mt-2 w-full rounded-lg px-3 py-2 text-sm font-semibold transition ${
                       themeMode === "light"
-                        ? "mt-3 w-full rounded-lg bg-rose-100 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-200"
-                        : "mt-3 w-full rounded-lg bg-rose-500/20 px-3 py-2 text-sm font-semibold text-rose-300 hover:bg-rose-500/30"
-                    }
+                        ? "bg-rose-100 text-rose-700 hover:bg-rose-200"
+                        : "bg-rose-500/20 text-rose-300 hover:bg-rose-500/30"
+                    }`}
                   >
                     Logout
                   </button>
@@ -3352,6 +3442,47 @@ export default function App() {
               className={`w-full max-w-lg rounded-2xl p-6 shadow ${themeMode === "light" ? "border border-slate-200 bg-white" : "border border-slate-700 bg-slate-900"}`}
             >
               <h2 className={`mb-5 text-2xl font-bold ${themeMode === "light" ? "text-slate-900" : "text-slate-100"}`}>Edit Profile</h2>
+              
+              {/* Profile Image Upload Section */}
+              <div className="mb-6 space-y-3">
+                <label className={`block text-sm font-semibold ${themeMode === "light" ? "text-slate-700" : "text-slate-300"}`}>Profile Picture</label>
+                <div className="flex items-center gap-4">
+                  <div className={`flex h-24 w-24 shrink-0 items-center justify-center rounded-full border-2 ${
+                    imagePreview || profileForm.image_url
+                      ? "border-cyan-500"
+                      : themeMode === "light"
+                      ? "border-slate-300"
+                      : "border-slate-700"
+                  }`}>
+                    {imagePreview || profileForm.image_url ? (
+                      <img
+                        src={imagePreview || profileForm.image_url}
+                        alt="Profile preview"
+                        className="h-full w-full rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className={`text-2xl font-bold ${themeMode === "light" ? "text-slate-400" : "text-slate-500"}`}>
+                        {profile.name?.charAt(0).toUpperCase() || "?"}
+                      </div>
+                    )}
+                  </div>
+                  <label className="cursor-pointer">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleProfileImageChange}
+                      className="hidden"
+                    />
+                    <div className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400 transition cursor-pointer">
+                      Choose Image
+                    </div>
+                  </label>
+                </div>
+                <p className={`text-xs ${themeMode === "light" ? "text-slate-500" : "text-slate-400"}`}>
+                  Max 5MB. Supported: JPG, PNG, GIF, WebP
+                </p>
+              </div>
+              
               <div className="space-y-3">
                 {[
                   ["name", "Full Name"],
