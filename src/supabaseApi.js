@@ -222,7 +222,7 @@ export const directLoadDashboard = async (uid, fallbackUser = null) => {
       .maybeSingle(),
     supabase
       .from("user_profile")
-      .select("name,position,company,email,department,supervisor")
+      .select("name,position,company,email,department,supervisor,image_url")
       .eq("user_id", uid)
       .maybeSingle(),
   ]);
@@ -276,6 +276,7 @@ export const directLoadDashboard = async (uid, fallbackUser = null) => {
       email: fallbackUser?.email || "",
       department: "",
       supervisor: "",
+      image_url: "",
       updated_at: now,
     };
 
@@ -306,6 +307,7 @@ export const directLoadDashboard = async (uid, fallbackUser = null) => {
       email: profile.email || fallbackUser?.email || "",
       department: profile.department || "",
       supervisor: profile.supervisor || "",
+      image_url: profile.image_url || "",
     },
   };
 };
@@ -413,6 +415,7 @@ export const directUpdateProfile = async (uid, authUser, payload) => {
     email: payload?.email,
     department: payload?.department,
     supervisor: payload?.supervisor,
+    image_url: payload?.image_url,
     updated_at: now,
   };
 
@@ -425,7 +428,7 @@ export const directUpdateProfile = async (uid, authUser, payload) => {
   const { data: profileRow, error: profileError } = await supabase
     .from("user_profile")
     .upsert(profilePayload, { onConflict: "user_id" })
-    .select("name,position,company,email,department,supervisor")
+    .select("name,position,company,email,department,supervisor,image_url")
     .single();
 
   if (profileError) throw profileError;
@@ -449,6 +452,7 @@ export const directUpdateProfile = async (uid, authUser, payload) => {
     email: profileRow.email || authUser?.email || "",
     department: profileRow.department || "",
     supervisor: profileRow.supervisor || "",
+    image_url: profileRow.image_url || "",
   };
 };
 

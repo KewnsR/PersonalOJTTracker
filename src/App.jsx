@@ -1460,7 +1460,10 @@ export default function App() {
       setImagePreview(null);
       localStorage.setItem("userProfile", JSON.stringify(nextProfile));
       setShowProfileModal(false);
-    } catch {
+    } catch (err) {
+      console.error("Profile save error:", err);
+      setError("Failed to save profile. Please try again.");
+      // Still save locally for now
       setProfile(profileForm);
       localStorage.setItem("userProfile", JSON.stringify(profileForm));
       setShowProfileModal(false);
