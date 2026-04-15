@@ -1441,13 +1441,8 @@ export default function App() {
       reader.readAsDataURL(file);
 
       // Upload the file
-      if (useDirectSupabase) {
-        const imageUrl = await uploadProfileImage(authUser?.id, file);
-        setProfileForm((prev) => ({ ...prev, image_url: imageUrl }));
-      } else {
-        const imageUrl = await uploadProfileImage(authUser?.id, file);
-        setProfileForm((prev) => ({ ...prev, image_url: imageUrl }));
-      }
+      const imageUrl = await uploadProfileImage(authUser?.id, file);
+      setProfileForm((prev) => ({ ...prev, image_url: imageUrl }));
     } catch (err) {
       setError(err.message || "Failed to upload image");
       setImagePreview(null);

@@ -468,6 +468,20 @@ export const uploadProfileImage = async (uid, file) => {
     throw new Error("File size must be less than 5MB");
   }
 
+  // Helper to convert file to base64
+  const fileToBase64 = () => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        resolve(event.target.result);
+      };
+      reader.onerror = () => {
+        reject(new Error("Failed to read file"));
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
   try {
     const supabase = getSupabase();
 
@@ -496,19 +510,19 @@ export const uploadProfileImage = async (uid, file) => {
 
     return urlData.publicUrl;
   } catch (err) {
-    // If Supabase is not configured, store image as base64 in profile
-    if (err.message.includes("Supabase client is not configured")) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          resolve(event.target.result);
-        };
-        reader.onerror = () => {
-          reject(new Error("Failed to read file"));
-        };
-        reader.readAsDataURL(file);
-      });
+    const errorMsg = err.message || "";
+    
+    // If bucket doesn't exist, Supabase not configured, or any storage error, fall back to base64
+    if (
+      errorMsg.includes("Bucket not found") ||
+      errorMsg.includes("Supabase client is not configured") ||
+      errorMsg.includes("Upload failed") ||
+      errorMsg.includes("bucket")
+    ) {
+      console.warn("Storage unavailable, storing image as base64:", errorMsg);
+      return await fileToBase64();
     }
+    
     throw err;
   }
 };
