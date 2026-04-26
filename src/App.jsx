@@ -354,6 +354,7 @@ export default function App() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showGoalModal, setShowGoalModal] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
+  const [addSelectedDateKeys, setAddSelectedDateKeys] = useState(() => [toLocalDateString(new Date())]);
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1201,22 +1202,53 @@ export default function App() {
   };
 
   const getEntryId = (entry) => entry?._id || entry?.id || entry?.date;
+  const hasManualBulkSelection = !editingId && addSelectedDateKeys.length > 1;
 
   const handleDateSelect = (date) => {
+    const nextDateStr = toLocalDateString(date);
     setSelectedDate(date);
     setForm((prev) => ({
       ...prev,
-      date: toLocalDateString(date),
+      date: nextDateStr,
       day: getDayOfWeek(date),
     }));
   };
 
+  const handleAddCalendarDayClick = (date) => {
+    if (editingId) {
+      handleDateSelect(date);
+      return;
+    }
+
+    const dateKey = toLocalDateString(date);
+
+    setAddSelectedDateKeys((prev) => {
+      const exists = prev.includes(dateKey);
+      const next = exists ? prev.filter((key) => key !== dateKey) : [...prev, dateKey];
+      const sortedNext = next.sort();
+      const finalDates = sortedNext.length > 0 ? sortedNext : [dateKey];
+      const firstDate = finalDates[0];
+      const firstDateObj = fromDateString(firstDate);
+
+      setSelectedDate(firstDateObj);
+      setForm((current) => ({
+        ...current,
+        date: firstDate,
+        day: getDayOfWeek(firstDateObj),
+      }));
+
+      return finalDates;
+    });
+  };
+
   const openAddModal = () => {
     const today = new Date();
+    const todayDateKey = toLocalDateString(today);
     setEditingId(null);
     setSelectedDate(today);
+    setAddSelectedDateKeys([todayDateKey]);
     setForm({
-      date: toLocalDateString(today),
+      date: todayDateKey,
       timeIn: "08:00",
       timeOut: "18:00",
       notes: "",
@@ -1246,6 +1278,7 @@ export default function App() {
     setTimeIn12(toTwelveHour(entry.timeIn));
     setTimeOut12(toTwelveHour(entry.timeOut));
     setSelectedDate(entryDate);
+    setAddSelectedDateKeys([entry.date]);
     setShowAddModal(true);
   };
 
@@ -1267,6 +1300,32 @@ export default function App() {
     }
 
     const payload = { ...form, timeIn: timeIn24, timeOut: timeOut24, hours };
+    const selectedDates = editingId ? [form.date] : addSelectedDateKeys;
+
+    if (!selectedDates.length) {
+      setError("Please select at least one date.");
+      return;
+    }
+
+    const existingEntryDates = new Set(entries.map((entry) => entry?.date).filter(Boolean));
+    const datesToCreate =
+      editingId || !selectedDates.length
+        ? selectedDates
+        : selectedDates.filter((dateValue) => !existingEntryDates.has(dateValue));
+
+    if (!editingId && !datesToCreate.length) {
+      setError("All selected dates already have entries. Please choose other dates.");
+      return;
+    }
+
+    const payloads = datesToCreate.map((dateValue) => {
+      const dateObject = fromDateString(dateValue);
+      return {
+        ...payload,
+        date: dateValue,
+        day: getDayOfWeek(dateObject),
+      };
+    });
 
     try {
       if (useDirectSupabase) {
@@ -1290,9 +1349,11 @@ export default function App() {
             });
           }
         } else {
-          const createdEntry = await directCreateEntry(uid, payload);
+          const createdEntries = await Promise.all(
+            payloads.map((entryPayload) => directCreateEntry(uid, entryPayload))
+          );
           setEntries((prev) => {
-            const nextEntries = [createdEntry, ...prev];
+            const nextEntries = [...createdEntries, ...prev];
             persistEntriesLocally(nextEntries);
             return nextEntries;
           });
@@ -1329,22 +1390,32 @@ export default function App() {
           });
         }
       } else {
-        const res = await axios.post(`${API_URL}/entries`, payload);
+        const createdEntries = await Promise.all(
+          payloads.map(async (entryPayload) => {
+            const res = await axios.post(`${API_URL}/entries`, entryPayload);
+            return res.data;
+          })
+        );
         setEntries((prev) => {
-          const nextEntries = [res.data, ...prev];
+          const nextEntries = [...createdEntries, ...prev];
           persistEntriesLocally(nextEntries);
           return nextEntries;
         });
       }
 
-      setError("");
+      if (!editingId && datesToCreate.length < selectedDates.length) {
+        const skippedCount = selectedDates.length - datesToCreate.length;
+        setError(`Added ${datesToCreate.length} entr${datesToCreate.length === 1 ? "y" : "ies"}. Skipped ${skippedCount} duplicate date${skippedCount === 1 ? "" : "s"}.`);
+      } else {
+        setError("");
+      }
       handleCloseModal();
     } catch {
-      const offlineEntry = {
-        ...payload,
-        _id: editingId || `local-${Date.now().toString()}`,
-      };
       if (editingId) {
+        const offlineEntry = {
+          ...payload,
+          _id: editingId || `local-${Date.now().toString()}`,
+        };
         setEntries((prev) => {
           const nextEntries = prev.map((it) =>
             getEntryId(it) === editingId ? { ...it, ...offlineEntry } : it
@@ -1353,8 +1424,12 @@ export default function App() {
           return nextEntries;
         });
       } else {
+        const offlineEntries = payloads.map((entryPayload, index) => ({
+          ...entryPayload,
+          _id: `local-${Date.now().toString()}-${index}`,
+        }));
         setEntries((prev) => {
-          const nextEntries = [offlineEntry, ...prev];
+          const nextEntries = [...offlineEntries, ...prev];
           persistEntriesLocally(nextEntries);
           return nextEntries;
         });
@@ -3155,10 +3230,32 @@ export default function App() {
                         <Calendar
                           value={selectedDate}
                           onChange={handleDateSelect}
+                          onClickDay={handleAddCalendarDayClick}
                           maxDate={new Date()}
+                          tileClassName={({ date, view }) => {
+                            if (view !== "month" || editingId) return "";
+
+                            const dayKey = toLocalDateString(date);
+                            const classes = [];
+
+                            if (addSelectedDateKeys.includes(dayKey)) {
+                              classes.push("calendar-day-manual-selected");
+                            }
+
+                            if (entries.some((entry) => entry?.date === dayKey)) {
+                              classes.push("calendar-day-existing-entry");
+                            }
+
+                            return classes.join(" ");
+                          }}
                         />
                       </Suspense>
                     </div>
+                    {!editingId && (
+                      <p className={`mt-2 text-xs ${themeMode === "light" ? "text-slate-500" : "text-slate-400"}`}>
+                        Click dates to manually select multiple days. Dates with existing entries are skipped automatically.
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-4">
                     <div>
@@ -3312,7 +3409,7 @@ export default function App() {
                     type="submit"
                     className="flex-1 rounded-lg bg-cyan-500 py-2 font-semibold text-slate-950 hover:bg-cyan-400"
                   >
-                    {editingId ? "Update Entry" : "Add Entry"}
+                    {editingId ? "Update Entry" : hasManualBulkSelection ? "Add Entries" : "Add Entry"}
                   </button>
                 </div>
               </form>
