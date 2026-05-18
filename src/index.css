@@ -1,242 +1,335 @@
 @import "tailwindcss";
 
-[data-theme='light'] .text-slate-100 {
-	color: #0f172a !important;
+/* ============================================================
+   DESIGN TOKENS
+   ============================================================ */
+:root {
+  --radius-sm:  6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  --transition-fast:  0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base:  0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow:  0.35s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Dark palette (default) */
+  --surface-bg:        #0a0f1e;
+  --surface-card:      #111827;
+  --surface-card-alt:  #1a2332;
+  --surface-overlay:   rgba(0, 0, 0, 0.55);
+
+  --border-subtle:     rgba(255, 255, 255, 0.07);
+  --border-default:    rgba(255, 255, 255, 0.12);
+  --border-emphasis:   rgba(255, 255, 255, 0.22);
+
+  --text-primary:      #f0f4ff;
+  --text-secondary:    #8a99b8;
+  --text-tertiary:     #4f6082;
+  --text-accent:       #38bdf8;
+  --text-warning:      #fbbf24;
+  --text-danger:       #f87171;
+
+  --accent-primary:    #0ea5e9;
+  --accent-hover:      #38bdf8;
+  --accent-subtle:     rgba(14, 165, 233, 0.12);
+  --accent-ring:       rgba(14, 165, 233, 0.35);
 }
+
+/* ============================================================
+   LIGHT THEME OVERRIDES
+   ============================================================ */
+[data-theme='light'] {
+  --surface-bg:        #f5f7fb;
+  --surface-card:      #ffffff;
+  --surface-card-alt:  #f0f4f8;
+  --surface-overlay:   rgba(15, 23, 42, 0.3);
+
+  --border-subtle:     rgba(15, 23, 42, 0.06);
+  --border-default:    rgba(15, 23, 42, 0.11);
+  --border-emphasis:   rgba(15, 23, 42, 0.2);
+
+  --text-primary:      #0f172a;
+  --text-secondary:    #3f536e;
+  --text-tertiary:     #7896b4;
+  --text-accent:       #0369a1;
+  --text-warning:      #92400e;
+  --text-danger:       #991b1b;
+
+  --accent-primary:    #0284c7;
+  --accent-hover:      #0369a1;
+  --accent-subtle:     rgba(2, 132, 199, 0.09);
+  --accent-ring:       rgba(2, 132, 199, 0.3);
+}
+
+/* ============================================================
+   TAILWIND LIGHT THEME MAPPING
+   ============================================================ */
+[data-theme='light'] .text-slate-100  { color: var(--text-primary)    !important; }
 [data-theme='light'] .text-slate-200,
-[data-theme='light'] .text-slate-300 {
-	color: #334155 !important;
-}
-[data-theme='light'] .text-slate-400 {
-	color: #64748b !important;
-}
-[data-theme='light'] .text-cyan-300 {
-	color: #0369a1 !important;
-}
-[data-theme='light'] .text-amber-300 {
-	color: #a16207 !important;
-}
-[data-theme='light'] .text-rose-200 {
-	color: #b91c1c !important;
-}
-[data-theme='light'] .bg-slate-900 {
-	background-color: #ffffff !important;
-}
+[data-theme='light'] .text-slate-300  { color: var(--text-secondary)   !important; }
+[data-theme='light'] .text-slate-400  { color: var(--text-tertiary)    !important; }
+[data-theme='light'] .text-slate-950  { color: #ffffff                 !important; }
+[data-theme='light'] .text-cyan-300   { color: var(--text-accent)      !important; }
+[data-theme='light'] .text-amber-300  { color: var(--text-warning)     !important; }
+[data-theme='light'] .text-rose-200   { color: var(--text-danger)      !important; }
+
+[data-theme='light'] .bg-slate-900         { background-color: var(--surface-bg)       !important; }
 [data-theme='light'] .bg-slate-800,
 [data-theme='light'] .bg-slate-800\/60,
-[data-theme='light'] .bg-slate-800\/70 {
-	background-color: #f8fafc !important;
-}
+[data-theme='light'] .bg-slate-800\/70     { background-color: var(--surface-card)     !important; }
+[data-theme='light'] .bg-black\/60         { background-color: var(--surface-overlay)  !important; }
+[data-theme='light'] .bg-rose-500\/10      { background-color: #fee2e2                 !important; }
+[data-theme='light'] .bg-cyan-500\/20      { background-color: var(--accent-subtle)    !important; }
+
+[data-theme='light'] .bg-cyan-500          { background-color: var(--accent-primary)   !important; color: #ffffff !important; }
+[data-theme='light'] .hover\:bg-cyan-400:hover { background-color: var(--accent-hover) !important; color: #ffffff !important; }
+
 [data-theme='light'] .border-slate-700,
-[data-theme='light'] .border-slate-800 {
-	border-color: #e2e8f0 !important;
-}
-[data-theme='light'] .bg-rose-500\/10 {
-	background-color: #fee2e2 !important;
-}
-[data-theme='light'] .bg-black\/60 {
-	background-color: rgba(15, 23, 42, 0.35) !important;
-}
-[data-theme='light'] .placeholder-slate-500::placeholder {
-	color: #94a3b8 !important;
-}
-[data-theme='light'] .bg-slate-800\/70.text-slate-200,
-[data-theme='light'] .bg-slate-800\/70 .text-slate-200 {
-	color: #334155 !important;
-}
-[data-theme='light'] .bg-cyan-500 {
-	background-color: #0284c7 !important;
-	color: #ffffff !important;
-}
-[data-theme='light'] .hover\:bg-cyan-400:hover {
-	background-color: #0369a1 !important;
-	color: #ffffff !important;
-}
-[data-theme='light'] .bg-cyan-500\/20 {
-	background-color: #e0f2fe !important;
-}
-[data-theme='light'] .text-slate-950 {
-	color: #ffffff !important;
-}
+[data-theme='light'] .border-slate-800     { border-color: var(--border-default)       !important; }
+[data-theme='light'] .placeholder-slate-500::placeholder { color: var(--text-tertiary) !important; }
+
+/* ============================================================
+   THEME SWITCH
+   ============================================================ */
 .theme-switch {
-	position: relative;
-	width: 92px;
-	height: 42px;
-	border-radius: 9999px;
-	border: 1px solid #334155;
-	transition: all 0.25s ease;
-	display: inline-flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 0 10px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 80px;
+  height: 38px;
+  padding: 0 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-default);
+  background: var(--surface-card);
+  cursor: pointer;
+  transition: background var(--transition-base), border-color var(--transition-base);
+  outline: none;
+  user-select: none;
 }
-.theme-switch--dark {
-	background: #0f172a;
+
+.theme-switch:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
-.theme-switch--light {
-	background: #e2e8f0;
-	border-color: #cbd5e1;
+
+.theme-switch:hover {
+  border-color: var(--border-emphasis);
 }
+
 .theme-switch__icon {
-	font-size: 16px;
-	line-height: 1;
-	user-select: none;
-	z-index: 1;
+  font-size: 15px;
+  line-height: 1;
+  z-index: 1;
+  pointer-events: none;
+  color: var(--text-tertiary);
+  transition: color var(--transition-fast);
 }
-.theme-switch__icon--sun {
-	color: #2563eb;
+
+.theme-switch--dark .theme-switch__icon--moon,
+.theme-switch--light .theme-switch__icon--sun {
+  color: var(--accent-primary);
 }
-.theme-switch__icon--moon {
-	color: #2563eb;
-}
-.theme-switch--dark .theme-switch__icon--sun {
-	color: #93c5fd;
-}
-.theme-switch--light .theme-switch__icon--moon {
-	color: #60a5fa;
-}
+
 .theme-switch__thumb {
-	position: absolute;
-	top: 3px;
-	left: 4px;
-	width: 34px;
-	height: 34px;
-	border-radius: 9999px;
-	background: linear-gradient(180deg, #ffffff, #d1d5db);
-	box-shadow: 0 2px 8px rgba(15, 23, 42, 0.35);
-	transition: transform 0.25s ease;
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
+  background: var(--accent-primary);
+  transition: transform var(--transition-base), background var(--transition-base);
+  will-change: transform;
 }
+
 .theme-switch--dark .theme-switch__thumb {
-	transform: translateX(50px);
-	background: linear-gradient(180deg, #374151, #111827);
+  transform: translateX(40px);
+  background: #1e293b;
+  border: 1px solid var(--border-emphasis);
 }
+
+/* ============================================================
+   CALENDAR BASE
+   ============================================================ */
 .calendar-wrapper .react-calendar {
-	width: 100%;
-	border: none;
-	background: transparent;
-	color: #e2e8f0;
-	font-family: inherit;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.5;
 }
-[data-theme='light'] .calendar-wrapper .react-calendar {
-	color: #0f172a;
+
+/* Navigation */
+.calendar-wrapper .react-calendar__navigation {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
 }
+
 .calendar-wrapper .react-calendar__navigation button {
-	color: #e2e8f0;
-	background: transparent !important;
-	border-radius: 8px;
+  color: var(--text-secondary);
+  background: transparent !important;
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  transition: color var(--transition-fast), background var(--transition-fast);
 }
-[data-theme='light'] .calendar-wrapper .react-calendar__navigation button {
-	color: #0f172a;
-}
+
 .calendar-wrapper .react-calendar__navigation button:hover {
-	background: rgba(51, 65, 85, 0.6);
-	border-radius: 8px;
+  background: var(--border-subtle) !important;
+  color: var(--text-primary);
 }
-[data-theme='light'] .calendar-wrapper .react-calendar__navigation button:hover {
-	background: #e2e8f0;
+
+.calendar-wrapper .react-calendar__navigation__label {
+  color: var(--text-primary);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
+
+/* Weekday headers */
+.calendar-wrapper .react-calendar__month-view__weekdays {
+  text-align: center;
+}
+
+.calendar-wrapper .react-calendar__month-view__weekdays__weekday {
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-bottom: 6px;
+}
+
+.calendar-wrapper .react-calendar__month-view__weekdays__weekday abbr {
+  text-decoration: none;
+}
+
+/* Tiles */
 .calendar-wrapper .react-calendar__tile {
-	color: #e2e8f0;
-	background: transparent !important;
-	border-radius: 8px;
+  position: relative;
+  color: var(--text-primary);
+  background: transparent !important;
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast), color var(--transition-fast);
+  font-size: 0.85rem;
 }
-[data-theme='light'] .calendar-wrapper .react-calendar__tile {
-	color: #0f172a;
-	background: transparent !important;
+
+.calendar-wrapper .react-calendar__tile:hover:not(:disabled) {
+  background: var(--accent-subtle) !important;
+  color: var(--text-accent);
 }
-.calendar-wrapper .react-calendar__tile:hover {
-	background: rgba(14, 165, 233, 0.2);
-}
+
 .calendar-wrapper .react-calendar__tile:disabled {
-	background: transparent !important;
-	color: #64748b;
+  background: transparent !important;
+  color: var(--text-tertiary);
+  opacity: 0.45;
+  cursor: not-allowed;
 }
-[data-theme='light'] .calendar-wrapper .react-calendar__tile:disabled {
-	color: #94a3b8;
-}
+
 .calendar-wrapper .react-calendar__month-view__days__day--neighboringMonth {
-	color: #64748b;
+  color: var(--text-tertiary);
+  opacity: 0.5;
 }
-[data-theme='light'] .calendar-wrapper .react-calendar__month-view__days__day--neighboringMonth {
-	color: #94a3b8;
-}
-.calendar-wrapper .react-calendar__tile--active {
-	background: #0284c7;
-	color: #0f172a;
-}
+
+/* Active / selected tile */
+.calendar-wrapper .react-calendar__tile--active,
 .calendar-wrapper .react-calendar__tile--active:enabled:hover,
 .calendar-wrapper .react-calendar__tile--active:enabled:focus {
-	background: #0284c7 !important;
-	color: #0f172a;
+  background: var(--accent-primary) !important;
+  color: #ffffff !important;
+  font-weight: 600;
 }
+
+/* Today tile */
 .calendar-wrapper .react-calendar__tile--now {
-	background: rgba(34, 211, 238, 0.2);
-	color: #67e8f9;
+  background: var(--accent-subtle) !important;
+  color: var(--text-accent);
+  font-weight: 600;
 }
+
+.calendar-wrapper .react-calendar__tile--now::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1.5px solid var(--accent-primary);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ============================================================
+   LARGE CALENDAR VARIANT
+   ============================================================ */
 .calendar-wrapper--large .react-calendar {
-	font-size: 1.05rem;
+  font-size: 0.95rem;
 }
+
 .calendar-wrapper--large .react-calendar__navigation {
-	height: 56px;
-	margin-bottom: 10px;
+  height: 52px;
+  margin-bottom: 12px;
 }
+
 .calendar-wrapper--large .react-calendar__navigation button {
-	min-width: 50px;
-	font-size: 1rem;
+  min-width: 46px;
+  font-size: 0.95rem;
 }
+
 .calendar-wrapper--large .react-calendar__tile {
-	min-height: 52px;
-	padding: 0.65rem 0.4rem;
+  min-height: 52px;
+  padding: 0.6rem 0.35rem 1.1rem;
 }
-.calendar-wrapper .react-calendar__tile {
-	position: relative;
-}
+
+/* ============================================================
+   CALENDAR DAY INDICATORS
+   ============================================================ */
 .calendar-day-indicators {
-	position: absolute;
-	left: 50%;
-	bottom: 6px;
-	transform: translateX(-50%);
-	display: flex;
-	gap: 4px;
+  position: absolute;
+  left: 50%;
+  bottom: 5px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 3px;
+  pointer-events: none;
 }
+
 .calendar-day-indicator {
-	width: 6px;
-	height: 6px;
-	border-radius: 9999px;
-	display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  display: inline-block;
+  flex-shrink: 0;
 }
-.calendar-day-indicator--entry {
-	background: #22ee63;
-}
-.calendar-day-indicator--report {
-	background: #e6e911;
-}
-[data-theme='light'] .calendar-day-indicator--entry {
-	background: #22ee63;
-}
-[data-theme='light'] .calendar-day-indicator--report {
-	background: #e6e911;
-}
+
+.calendar-day-indicator--entry  { background: #34d399; }
+.calendar-day-indicator--report { background: #fbbf24; }
+
+/* ============================================================
+   MANUAL SELECTED DAY
+   ============================================================ */
 .calendar-wrapper .react-calendar__tile.calendar-day-manual-selected {
-	background: rgba(6, 182, 212, 0.35) !important;
-	color: #e0f2fe;
-	box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.75);
+  background: rgba(14, 165, 233, 0.15) !important;
+  color: var(--text-accent) !important;
+  box-shadow: inset 0 0 0 1.5px var(--accent-primary);
+  font-weight: 500;
 }
-[data-theme='light'] .calendar-wrapper .react-calendar__tile.calendar-day-manual-selected {
-	background: #cffafe !important;
-	color: #0f172a;
-	box-shadow: inset 0 0 0 1px #0891b2;
-}
+
+/* ============================================================
+   EXISTING ENTRY BADGE
+   ============================================================ */
 .calendar-wrapper .react-calendar__tile.calendar-day-existing-entry::after {
-	content: "";
-	position: absolute;
-	top: 6px;
-	right: 6px;
-	width: 6px;
-	height: 6px;
-	border-radius: 9999px;
-	background: #f59e0b;
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: #f59e0b;
 }
+
 [data-theme='light'] .calendar-wrapper .react-calendar__tile.calendar-day-existing-entry::after {
-	background: #b45309;
+  background: #d97706;
 }

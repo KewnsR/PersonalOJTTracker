@@ -358,6 +358,7 @@ export default function App() {
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [useOfflineMode, setUseOfflineMode] = useState(false);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [requiredOjtHours, setRequiredOjtHours] = useState(DEFAULT_REQUIRED_OJT_HOURS);
   const [goalInput, setGoalInput] = useState(String(DEFAULT_REQUIRED_OJT_HOURS));
@@ -403,18 +404,6 @@ export default function App() {
       delete axios.defaults.headers.common.Authorization;
     }
   };
-
-  const shouldForceDirectSupabase =
-    !isLocalFrontend &&
-    isSupabaseConfigured &&
-    !useDirectSupabase &&
-    (hasMissingHostedApiUrl || hasPlaceholderApiUrl || hasHostedLocalApiUrl);
-
-  useEffect(() => {
-    if (shouldForceDirectSupabase) {
-      setUseDirectSupabase(true);
-    }
-  }, [shouldForceDirectSupabase]);
 
   useEffect(() => {
     applyAuthHeader(authToken);
@@ -464,6 +453,44 @@ export default function App() {
       email: authUser.email || prev.email,
     }));
   }, [authUser]);
+
+  // Probe network reachability early and enable offline mode when proxy/network blocks requests.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const probe = async () => {
+      // If running locally (localhost), skip offline mode probe.
+      if (isLocalFrontend) return;
+
+      const probeTargets = [];
+      if (configuredApiUrl) probeTargets.push(`${configuredApiUrl}/health`);
+      if (import.meta.env.VITE_SUPABASE_URL) probeTargets.push(import.meta.env.VITE_SUPABASE_URL);
+
+      if (!probeTargets.length) return;
+
+      try {
+        // Try the first probe target with a short timeout.
+        await withTimeout(
+          axios.get(probeTargets[0], { timeout: 2500, validateStatus: () => true }),
+          2500,
+          "probe-timeout"
+        );
+        // reachable — do nothing
+      } catch (err) {
+        // network/proxy likely blocking requests — switch to offline-only
+        if (isNetworkLikeError(err?.message) || isNetworkLikeError(err?.toString())) {
+          setUseOfflineMode(true);
+          setUseDirectSupabase(false);
+          setError(
+            "Network appears restricted — switched to Offline mode. Data will be saved locally until network is available."
+          );
+          setLoading(false);
+        }
+      }
+    };
+
+    probe();
+  }, []);
 
   const handleOAuthAuthError = async (authError, oauthProvider = OAUTH_PROVIDER_GOOGLE) => {
     const providerLabel = getOAuthProviderLabel(oauthProvider);
@@ -767,6 +794,42 @@ export default function App() {
   const loadData = async (token = authToken) => {
     try {
       setLoading(true);
+
+      if (useOfflineMode) {
+        // Load from localStorage when offline mode is active
+        const stored = localStorage.getItem("ojtData");
+        const prefs = localStorage.getItem("lunchBreak");
+        const goalPrefs = localStorage.getItem("ojtGoal");
+        const localWeeklyJournal = localStorage.getItem("weeklyJournalNotes");
+        const savedProfile = localStorage.getItem("userProfile");
+        const savedThemeMode = localStorage.getItem("themeMode");
+
+        if (stored) setEntries(safeParseJson(stored, []));
+        if (prefs) {
+          const p = safeParseJson(prefs, {});
+          setLunchStart(p.start ?? 11);
+          setLunchEnd(p.end ?? 12);
+        }
+        if (goalPrefs) {
+          const g = safeParseJson(goalPrefs, {});
+          const savedRequiredHours = toValidRequiredOjtHours(g.requiredHours);
+          setRequiredOjtHours(savedRequiredHours);
+          setGoalInput(String(savedRequiredHours));
+          setShowGoalProgress(Boolean(g.showGoalProgress ?? true));
+        }
+        if (localWeeklyJournal) setWeeklyJournalNotes(safeParseJson(localWeeklyJournal, {}));
+        setThemeMode(savedThemeMode === "dark" ? "dark" : DEFAULT_THEME_MODE);
+        if (savedProfile) {
+          const p = safeParseJson(savedProfile, null);
+          if (p) {
+            setProfile(p);
+            setProfileForm(p);
+          }
+        }
+
+        setLoading(false);
+        return;
+      }
 
       if (useDirectSupabase) {
         const directTokenUid =
@@ -1327,6 +1390,37 @@ export default function App() {
       };
     });
 
+    // If offline mode is active, save entries locally and skip network operations.
+    if (useOfflineMode) {
+      if (editingId) {
+        const offlineEntry = {
+          ...payload,
+          _id: editingId || `local-${Date.now().toString()}`,
+        };
+        setEntries((prev) => {
+          const nextEntries = prev.map((it) =>
+            getEntryId(it) === editingId ? { ...it, ...offlineEntry } : it
+          );
+          persistEntriesLocally(nextEntries);
+          return nextEntries;
+        });
+      } else {
+        const offlineEntries = payloads.map((entryPayload, index) => ({
+          ...entryPayload,
+          _id: `local-${Date.now().toString()}-${index}`,
+        }));
+        setEntries((prev) => {
+          const nextEntries = [...offlineEntries, ...prev];
+          persistEntriesLocally(nextEntries);
+          return nextEntries;
+        });
+      }
+
+      setError("");
+      handleCloseModal();
+      return;
+    }
+
     try {
       if (useDirectSupabase) {
         const uid = authUser?.id;
@@ -1369,13 +1463,36 @@ export default function App() {
         const serverId = originalEntry?._id || originalEntry?.id;
 
         if (serverId && !String(serverId).startsWith("local-")) {
+          const apiPayload = {
+            date: payload.date,
+            time_in: payload.timeIn,
+            time_out: payload.timeOut,
+            hours: payload.hours,
+            notes: payload.notes || "",
+            day: payload.day || "",
+          };
+
           const res = await axios.put(
             `${API_URL}/entries/${encodeURIComponent(serverId)}`,
-            payload
+            apiPayload
           );
+
+          const serverEntry = res?.data || {};
+          const normalized = {
+            _id: serverEntry.id || serverEntry._id || serverId,
+            date: serverEntry.date || payload.date,
+            timeIn: serverEntry.time_in || serverEntry.timeIn || payload.timeIn,
+            timeOut: serverEntry.time_out || serverEntry.timeOut || payload.timeOut,
+            hours: Number(serverEntry.hours ?? payload.hours ?? 0),
+            notes: serverEntry.notes ?? payload.notes ?? "",
+            day: serverEntry.day ?? payload.day ?? "",
+            createdAt: serverEntry.created_at || serverEntry.createdAt,
+            updatedAt: serverEntry.updated_at || serverEntry.updatedAt,
+          };
+
           setEntries((prev) => {
             const nextEntries = prev.map((it) =>
-              getEntryId(it) === editingId ? { ...it, ...res.data } : it
+              getEntryId(it) === editingId ? { ...it, ...normalized } : it
             );
             persistEntriesLocally(nextEntries);
             return nextEntries;
@@ -1392,10 +1509,34 @@ export default function App() {
       } else {
         const createdEntries = await Promise.all(
           payloads.map(async (entryPayload) => {
-            const res = await axios.post(`${API_URL}/entries`, entryPayload);
-            return res.data;
+            const apiPayload = {
+              date: entryPayload.date,
+              time_in: entryPayload.timeIn,
+              time_out: entryPayload.timeOut,
+              hours: entryPayload.hours,
+              notes: entryPayload.notes || "",
+              day: entryPayload.day || "",
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+
+            const res = await axios.post(`${API_URL}/entries`, apiPayload);
+            const serverEntry = res?.data || {};
+
+            return {
+              _id: serverEntry.id || serverEntry._id || `server-${Date.now()}`,
+              date: serverEntry.date || entryPayload.date,
+              timeIn: serverEntry.time_in || serverEntry.timeIn || entryPayload.timeIn,
+              timeOut: serverEntry.time_out || serverEntry.timeOut || entryPayload.timeOut,
+              hours: Number(serverEntry.hours ?? entryPayload.hours ?? 0),
+              notes: serverEntry.notes ?? entryPayload.notes ?? "",
+              day: serverEntry.day ?? entryPayload.day ?? "",
+              createdAt: serverEntry.created_at || serverEntry.createdAt,
+              updatedAt: serverEntry.updated_at || serverEntry.updatedAt,
+            };
           })
         );
+
         setEntries((prev) => {
           const nextEntries = [...createdEntries, ...prev];
           persistEntriesLocally(nextEntries);
